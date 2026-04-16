@@ -259,37 +259,71 @@ public class JiggerApp {
         // -- Cut sheet panel --
         CutSheetPanel cutSheetPanel = new CutSheetPanel(sceneManager, executor::getUnits);
 
-        // -- View container: holds 3D viewport + cut sheet in tabbed or split layout --
+        // -- View layout: permanent horizontal JSplitPane --
+        // The jME3 AWT Canvas cannot be reparented (moving it between containers
+        // invalidates the OpenGL context and crashes GPU drivers). So we use a
+        // permanent JSplitPane and control the divider position to show/hide panels.
+        JSplitPane hSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, viewportPanel, cutSheetPanel);
+        hSplitPane.setResizeWeight(0.6);
+        hSplitPane.setContinuousLayout(true);
+
+        // Tab-style toggle bar for tabbed mode
+        Color tabBg = new Color(50, 50, 58);
+        Color tabActiveFg = new Color(220, 220, 220);
+        Color tabInactiveFg = new Color(120, 120, 120);
+        Font tabFont = new Font(Font.SANS_SERIF, Font.BOLD, 11);
+
+        JButton viewportTab = new JButton("3D Viewport");
+        JButton cutSheetTab = new JButton("Cut Sheets");
+        for (JButton btn : new JButton[]{viewportTab, cutSheetTab}) {
+            btn.setFont(tabFont);
+            btn.setFocusable(false);
+            btn.setBorderPainted(false);
+            btn.setContentAreaFilled(false);
+            btn.setOpaque(true);
+            btn.setBackground(tabBg);
+        }
+
+        JPanel tabBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        tabBar.setBackground(tabBg);
+        tabBar.add(viewportTab);
+        tabBar.add(cutSheetTab);
+
+        // Tab button state
+        Runnable updateTabColors = () -> {
+            boolean showingViewport = hSplitPane.getDividerLocation() > hSplitPane.getWidth() / 2;
+            viewportTab.setForeground(showingViewport ? tabActiveFg : tabInactiveFg);
+            cutSheetTab.setForeground(showingViewport ? tabInactiveFg : tabActiveFg);
+        };
+
+        viewportTab.addActionListener(e -> {
+            hSplitPane.setDividerLocation(1.0);
+            updateTabColors.run();
+        });
+        cutSheetTab.addActionListener(e -> {
+            // Keep viewport at a minimal width (2px) to preserve OpenGL context
+            hSplitPane.setDividerLocation(2);
+            cutSheetPanel.repaint();
+            updateTabColors.run();
+        });
+
         JPanel viewContainer = new JPanel(new BorderLayout());
-        final JTabbedPane[] tabbedPane = {null};
-        final JSplitPane[] hSplitPane = {null};
+        viewContainer.add(hSplitPane, BorderLayout.CENTER);
 
         Runnable applyLayout = () -> {
-            viewContainer.removeAll();
             if (executor.getLayoutMode() == ViewLayoutMode.SPLIT_PANE) {
-                hSplitPane[0] = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, viewportPanel, cutSheetPanel);
-                hSplitPane[0].setResizeWeight(0.6);
-                hSplitPane[0].setDividerLocation((int) (frame.getWidth() * 0.6));
-                viewContainer.add(hSplitPane[0], BorderLayout.CENTER);
+                tabBar.setVisible(false);
+                hSplitPane.setDividerLocation((int) (frame.getWidth() * 0.6));
             } else {
-                tabbedPane[0] = new JTabbedPane();
-                tabbedPane[0].setFocusable(false);
-                tabbedPane[0].addTab("3D Viewport", viewportPanel);
-                tabbedPane[0].addTab("Cut Sheets", cutSheetPanel);
-                // Trigger repaint when switching to cut sheet tab (for lazy recompute)
-                tabbedPane[0].addChangeListener(e -> {
-                    if (tabbedPane[0].getSelectedComponent() == cutSheetPanel) {
-                        cutSheetPanel.repaint();
-                    }
-                });
-                viewContainer.add(tabbedPane[0], BorderLayout.CENTER);
+                tabBar.setVisible(true);
+                hSplitPane.setDividerLocation(1.0);
+                updateTabColors.run();
             }
-            viewContainer.revalidate();
-            viewContainer.repaint();
         };
-        applyLayout.run();
 
+        viewContainer.add(tabBar, BorderLayout.NORTH);
         executor.addLayoutChangeListener(mode -> SwingUtilities.invokeLater(applyLayout));
+        // Initial layout applied after frame is visible (see below)
 
         // -- Layout: view container on top, command line on bottom --
         JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, viewContainer, commandPanel);
@@ -353,6 +387,10 @@ public class JiggerApp {
         // window peer exists. This ordering is required on Windows where LWJGL3
         // cannot bind an OpenGL context to an unrealized AWT canvas.
         sceneManager.startCanvas();
+
+        // Apply initial layout now that the frame is realized
+        // (setDividerLocation with proportional values requires a non-zero width)
+        applyLayout.run();
 
         // Run startup script if it exists (~/.jigger/startup.jigs)
         String startupResult = executor.runStartupScript();
