@@ -1,7 +1,26 @@
+/*
+ * Copyright 2026 Bob Hablutzel
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Source: https://github.com/bobhablutzel/jigger
+ */
+
 package com.jigger.command;
 
 import com.jigger.SceneManager;
 import com.jigger.UnitSystem;
+import com.jigger.ViewLayoutMode;
 import com.jigger.model.*;
 import com.jme3.math.Vector3f;
 import org.antlr.v4.runtime.*;
@@ -28,12 +47,17 @@ public class CommandExecutor {
             UnitSystem.MILLIMETERS.getMeasurementSystem());
     private final List<Consumer<UnitSystem>> unitChangeListeners = new ArrayList<>();
     private final List<Consumer<Material>> materialChangeListeners = new ArrayList<>();
+    private final List<Consumer<ViewLayoutMode>> layoutChangeListeners = new ArrayList<>();
+    private ViewLayoutMode layoutMode = ViewLayoutMode.TABBED;
 
     private final Deque<UndoableAction> undoStack = new ArrayDeque<>();
     private final Deque<UndoableAction> redoStack = new ArrayDeque<>();
 
     /** Callback to open a file chooser dialog (set by JiggerApp). Returns null if cancelled. */
     private Supplier<Path> fileChooser;
+
+    /** Callback to open a save-file dialog. Accepts a description and extensions. Returns null if cancelled. */
+    private java.util.function.BiFunction<String, String[], Path> saveFileChooser;
 
     // -- Template recording state --
     private boolean definingTemplate = false;
@@ -85,8 +109,35 @@ public class CommandExecutor {
         materialChangeListeners.add(listener);
     }
 
+    public ViewLayoutMode getLayoutMode() {
+        return layoutMode;
+    }
+
+    public void setLayoutMode(ViewLayoutMode mode) {
+        this.layoutMode = mode;
+        for (Consumer<ViewLayoutMode> listener : layoutChangeListeners) {
+            listener.accept(mode);
+        }
+    }
+
+    public void addLayoutChangeListener(Consumer<ViewLayoutMode> listener) {
+        layoutChangeListeners.add(listener);
+    }
+
     public void setFileChooser(Supplier<Path> fileChooser) {
         this.fileChooser = fileChooser;
+    }
+
+    public void setSaveFileChooser(java.util.function.BiFunction<String, String[], Path> saveFileChooser) {
+        this.saveFileChooser = saveFileChooser;
+    }
+
+    /**
+     * Open a save-file dialog. Returns null if cancelled or no chooser is available.
+     */
+    public Path chooseSaveFile(String description, String... extensions) {
+        if (saveFileChooser == null) return null;
+        return saveFileChooser.apply(description, extensions);
     }
 
     /** Clear the undo/redo stacks. */

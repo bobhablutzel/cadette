@@ -47,6 +47,13 @@
             <version>${antlr4.version}</version>
         </dependency>
 
+        <!-- Apache PDFBox for cut sheet PDF export -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>3.0.4</version>
+        </dependency>
+
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>

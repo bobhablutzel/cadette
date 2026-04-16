@@ -1,11 +1,32 @@
+/*
+ * Copyright 2026 Bob Hablutzel
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Source: https://github.com/bobhablutzel/jigger
+ */
+
 package com.jigger.command;
 
+import com.jigger.CutSheetExporter;
 import com.jigger.SceneManager;
 import com.jigger.UnitSystem;
+import com.jigger.ViewLayoutMode;
 import com.jigger.model.*;
 import com.jme3.math.ColorRGBA;
 import com.jme3.math.Vector3f;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -267,6 +288,7 @@ public class CommandVisitor extends JiggerCommandBaseVisitor<String> {
                 .build();
 
         scene.getJointRegistry().addJoint(joint);
+        scene.markCutSheetDirty();
         executor.pushAction(new JoinAction(scene, joint));
 
         StringBuilder msg = new StringBuilder();
@@ -373,7 +395,10 @@ public class CommandVisitor extends JiggerCommandBaseVisitor<String> {
         if (target.BOM() != null) {
             return showBom();
         }
-        return "Unknown show target. Try: show units, show objects, show materials, show templates, show joints, show cutlist, show bom";
+        if (target.LAYOUT() != null) {
+            return showLayout();
+        }
+        return "Unknown show target. Try: show units, show objects, show materials, show templates, show joints, show cutlist, show bom, show layout";
     }
 
     @Override
@@ -398,7 +423,71 @@ public class CommandVisitor extends JiggerCommandBaseVisitor<String> {
             executor.setDefaultMaterial(mat);
             return "Default material set to " + mat.getDisplayName() + " (" + mat.getName() + ").";
         }
+        if (ctx.KERF() != null) {
+            float value = toMm(Float.parseFloat(ctx.NUMBER().getText()));
+            if (value < 0) {
+                return "Kerf must be non-negative.";
+            }
+            scene.setKerfMm(value);
+            String abbr = executor.getUnits().getAbbreviation();
+            return String.format("Kerf set to %.1f %s (%.1f mm).", fromMm(value), abbr, value);
+        }
+        if (ctx.layoutMode() != null) {
+            ViewLayoutMode mode = ctx.layoutMode().TABS() != null
+                    ? ViewLayoutMode.TABBED : ViewLayoutMode.SPLIT_PANE;
+            executor.setLayoutMode(mode);
+            return "Layout set to " + (mode == ViewLayoutMode.TABBED ? "tabbed" : "split pane") + ".";
+        }
         return "Unknown set target.";
+    }
+
+    @Override
+    public String visitExportCommand(JiggerCommandParser.ExportCommandContext ctx) {
+        var parts = scene.getAllParts();
+        if (parts.isEmpty()) {
+            return "No parts in scene — nothing to export.";
+        }
+
+        var layouts = SheetLayoutGenerator.generateLayouts(parts, scene.getKerfMm());
+        if (layouts.isEmpty()) {
+            return "No sheet goods in scene (only hardwood/metal parts) — nothing to export.";
+        }
+
+        // Determine format
+        var fmt = ctx.exportFormat();
+        boolean isPdf = fmt.PDF() != null;
+        boolean isPng = fmt.PNG() != null;
+        String extension = isPdf ? "pdf" : isPng ? "png" : "jpeg";
+        String description = isPdf ? "PDF files" : isPng ? "PNG images" : "JPEG images";
+
+        // Determine output path
+        Path outputPath;
+        if (ctx.STRING() != null) {
+            String path = ctx.STRING().getText();
+            path = path.substring(1, path.length() - 1); // strip quotes
+            outputPath = Path.of(path);
+            // Add extension if missing
+            if (!path.contains(".")) {
+                outputPath = Path.of(path + "." + extension);
+            }
+        } else {
+            outputPath = executor.chooseSaveFile(description, extension);
+            if (outputPath == null) {
+                return "Export cancelled.";
+            }
+        }
+
+        try {
+            UnitSystem units = executor.getUnits();
+            if (isPdf) {
+                CutSheetExporter.exportPdf(layouts, units, outputPath);
+            } else {
+                CutSheetExporter.exportImage(layouts, units, outputPath);
+            }
+            return "Exported cut sheets to " + outputPath.toAbsolutePath();
+        } catch (Exception e) {
+            return "Export failed: " + e.getMessage();
+        }
     }
 
     @Override
@@ -737,20 +826,23 @@ public class CommandVisitor extends JiggerCommandBaseVisitor<String> {
         StringBuilder sb = new StringBuilder();
         sb.append("Bill of Materials:\n\n");
 
-        // Materials
+        // Materials — use actual packing for sheet counts
         sb.append("  Materials:\n");
-        var bomEntries = CutListGenerator.generateBom(parts);
+        var layouts = SheetLayoutGenerator.generateLayouts(parts, scene.getKerfMm());
+        var bomEntries = CutListGenerator.generateBom(parts, layouts);
         for (var entry : bomEntries) {
             sb.append(String.format("    %d pc  %-30s  (%.2f %s thick)",
                     entry.getPartCount(),
                     entry.getMaterial().getDisplayName(),
                     fromMm(entry.getMaterial().getThicknessMm()), abbr));
-            if (entry.getSheetsNeeded() != null) {
-                sb.append(String.format("  ~%.1f sheets (%.0f x %.0f %s)",
-                        entry.getSheetsNeeded(),
+            if (entry.getSheetCount() != null) {
+                sb.append(String.format("  %d sheet%s (%.0f x %.0f %s, %.1f%% offcut)",
+                        entry.getSheetCount(),
+                        entry.getSheetCount() == 1 ? "" : "s",
                         fromMm(entry.getMaterial().getSheetWidthMm()),
                         fromMm(entry.getMaterial().getSheetHeightMm()),
-                        abbr));
+                        abbr,
+                        entry.getOffcutPercent()));
             }
             sb.append('\n');
         }
@@ -774,6 +866,76 @@ public class CommandVisitor extends JiggerCommandBaseVisitor<String> {
         }
 
         return sb.toString().stripTrailing();
+    }
+
+    private String showLayout() {
+        var parts = scene.getAllParts();
+        if (parts.isEmpty()) return "No parts in scene.";
+
+        float kerfMm = scene.getKerfMm();
+        var layouts = SheetLayoutGenerator.generateLayouts(parts, kerfMm);
+        if (layouts.isEmpty()) return "No sheet goods in scene (only hardwood/metal parts).";
+
+        String abbr = executor.getUnits().getAbbreviation();
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("Sheet Layouts (%s, kerf: %.1f %s):\n",
+                abbr, fromMm(kerfMm), abbr));
+
+        // Group layouts by material for numbering
+        String currentMaterial = null;
+        int sheetNum = 0;
+        int materialSheetCount = 0;
+
+        // Pre-count sheets per material
+        java.util.Map<String, Integer> sheetCounts = new java.util.LinkedHashMap<>();
+        for (var layout : layouts) {
+            sheetCounts.merge(layout.getMaterial().getDisplayName(), 1, Integer::sum);
+        }
+
+        for (var layout : layouts) {
+            String matName = layout.getMaterial().getDisplayName();
+            if (!matName.equals(currentMaterial)) {
+                currentMaterial = matName;
+                sheetNum = 1;
+                materialSheetCount = sheetCounts.get(matName);
+                sb.append('\n');
+            } else {
+                sheetNum++;
+            }
+
+            sb.append(String.format("  %s — Sheet %d of %d (%.0f x %.0f %s):\n",
+                    matName, sheetNum, materialSheetCount,
+                    fromMm(layout.getSheetWidthMm()), fromMm(layout.getSheetHeightMm()), abbr));
+
+            for (var p : layout.getPlacements()) {
+                sb.append(String.format("    %-25s %6.1f x %6.1f %s  at (%6.1f, %6.1f)",
+                        p.getPartName(),
+                        fromMm(p.getWidthOnSheet()), fromMm(p.getHeightOnSheet()), abbr,
+                        fromMm(p.getX()), fromMm(p.getY())));
+                if (p.isRotated()) {
+                    sb.append("  rotated");
+                }
+                if (p.getGrainRequirement() != GrainRequirement.ANY) {
+                    sb.append("  grain: " + p.getGrainRequirement().name().toLowerCase());
+                }
+                sb.append('\n');
+            }
+
+            sb.append(String.format("    Used: %.1f%%   Offcut: %.1f%%\n",
+                    100f - layout.getOffcutPercent(), layout.getOffcutPercent()));
+        }
+
+        // Summary
+        sb.append("\n  Summary:\n");
+        for (var entry : sheetCounts.entrySet()) {
+            sb.append(String.format("    %s: %d sheet%s\n",
+                    entry.getKey(), entry.getValue(),
+                    entry.getValue() == 1 ? "" : "s"));
+        }
+        int totalSheets = sheetCounts.values().stream().mapToInt(Integer::intValue).sum();
+        sb.append(String.format("    Total: %d sheet%s", totalSheets, totalSheets == 1 ? "" : "s"));
+
+        return sb.toString();
     }
 
     // -- Unit conversion shortcuts --
@@ -852,8 +1014,14 @@ public class CommandVisitor extends JiggerCommandBaseVisitor<String> {
                   show template <name>             — show full template definition (copiable)
                   show cutlist                     — cut list grouped by material
                   show bom                         — bill of materials + fasteners
+                  show layout                      — sheet layout optimization (bin packing)
                   set units <unit>                 — change display/input units
                   set material <mat>               — change default material
+                  set kerf <value>                 — saw blade kerf width (default 3.2mm)
+                  set layout tabs|split           — switch between tabbed and split-pane view
+                  export cutsheet pdf [file]      — export cut sheets to PDF (opens save dialog if no file)
+                  export cutsheet png [file]      — export cut sheets to PNG image
+                  export cutsheet jpg [file]      — export cut sheets to JPEG image
                       units: """ + UnitSystem.allNames() + """
 
                   run [file]                       — run a .jigs script (opens file dialog if omitted)

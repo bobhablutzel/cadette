@@ -1,3 +1,21 @@
+/*
+ * Copyright 2026 Bob Hablutzel
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Source: https://github.com/bobhablutzel/jigger
+ */
+
 package com.jigger;
 
 import com.jigger.command.CommandExecutor;
@@ -62,6 +80,25 @@ public class JiggerApp {
             int result = chooser.showOpenDialog(frame);
             if (result == JFileChooser.APPROVE_OPTION) {
                 return chooser.getSelectedFile().toPath();
+            }
+            return null;
+        });
+
+        // Save file chooser for "export" commands
+        executor.setSaveFileChooser((description, extensions) -> {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setDialogTitle("Export Cut Sheet");
+            chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
+                    description, extensions));
+            int result = chooser.showSaveDialog(frame);
+            if (result == JFileChooser.APPROVE_OPTION) {
+                java.io.File file = chooser.getSelectedFile();
+                // Add extension if the user didn't type one
+                String name = file.getName();
+                if (!name.contains(".") && extensions.length > 0) {
+                    file = new java.io.File(file.getParentFile(), name + "." + extensions[0]);
+                }
+                return file.toPath();
             }
             return null;
         });
@@ -211,8 +248,43 @@ public class JiggerApp {
 
         viewportPanel.add(bottomBar, BorderLayout.SOUTH);
 
-        // -- Layout: viewport on top, command line on bottom --
-        JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, viewportPanel, commandPanel);
+        // -- Cut sheet panel --
+        CutSheetPanel cutSheetPanel = new CutSheetPanel(sceneManager, executor::getUnits);
+
+        // -- View container: holds 3D viewport + cut sheet in tabbed or split layout --
+        JPanel viewContainer = new JPanel(new BorderLayout());
+        final JTabbedPane[] tabbedPane = {null};
+        final JSplitPane[] hSplitPane = {null};
+
+        Runnable applyLayout = () -> {
+            viewContainer.removeAll();
+            if (executor.getLayoutMode() == ViewLayoutMode.SPLIT_PANE) {
+                hSplitPane[0] = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, viewportPanel, cutSheetPanel);
+                hSplitPane[0].setResizeWeight(0.6);
+                hSplitPane[0].setDividerLocation((int) (frame.getWidth() * 0.6));
+                viewContainer.add(hSplitPane[0], BorderLayout.CENTER);
+            } else {
+                tabbedPane[0] = new JTabbedPane();
+                tabbedPane[0].setFocusable(false);
+                tabbedPane[0].addTab("3D Viewport", viewportPanel);
+                tabbedPane[0].addTab("Cut Sheets", cutSheetPanel);
+                // Trigger repaint when switching to cut sheet tab (for lazy recompute)
+                tabbedPane[0].addChangeListener(e -> {
+                    if (tabbedPane[0].getSelectedComponent() == cutSheetPanel) {
+                        cutSheetPanel.repaint();
+                    }
+                });
+                viewContainer.add(tabbedPane[0], BorderLayout.CENTER);
+            }
+            viewContainer.revalidate();
+            viewContainer.repaint();
+        };
+        applyLayout.run();
+
+        executor.addLayoutChangeListener(mode -> SwingUtilities.invokeLater(applyLayout));
+
+        // -- Layout: view container on top, command line on bottom --
+        JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, viewContainer, commandPanel);
         splitPane.setResizeWeight(0.75);
         splitPane.setDividerLocation(620);
 

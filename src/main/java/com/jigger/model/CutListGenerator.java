@@ -1,3 +1,21 @@
+/*
+ * Copyright 2026 Bob Hablutzel
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Source: https://github.com/bobhablutzel/jigger
+ */
+
 package com.jigger.model;
 
 import lombok.Data;
@@ -38,7 +56,8 @@ public class CutListGenerator {
         private final Material material;
         private final int partCount;
         private final float totalAreaMm2;  // total area of all parts in this material
-        private final Float sheetsNeeded;  // null if not a sheet good
+        private final Integer sheetCount;  // null if not a sheet good
+        private final Float offcutPercent;  // null if not a sheet good
     }
 
     @Data
@@ -96,15 +115,22 @@ public class CutListGenerator {
     }
 
     /**
-     * Generate the BOM: materials needed with sheet count estimates.
+     * Generate the BOM using actual sheet layout results from the packer.
      */
-    public static List<BomEntry> generateBom(Map<String, Part> parts) {
+    public static List<BomEntry> generateBom(Map<String, Part> parts, List<SheetLayout> layouts) {
         // Group parts by material
         Map<String, List<Part>> byMaterial = parts.values().stream()
                 .collect(Collectors.groupingBy(
                         p -> p.getMaterial().getName(),
                         LinkedHashMap::new,
                         Collectors.toList()));
+
+        // Index layouts by material name
+        Map<String, List<SheetLayout>> layoutsByMaterial = new LinkedHashMap<>();
+        for (SheetLayout layout : layouts) {
+            layoutsByMaterial.computeIfAbsent(layout.getMaterial().getName(), k -> new ArrayList<>())
+                    .add(layout);
+        }
 
         List<BomEntry> entries = new ArrayList<>();
         for (var entry : byMaterial.entrySet()) {
@@ -116,14 +142,19 @@ public class CutListGenerator {
                 totalArea += p.getCutWidthMm() * p.getCutHeightMm();
             }
 
-            Float sheetsNeeded = null;
-            if (mat.getSheetWidthMm() != null && mat.getSheetHeightMm() != null) {
-                float sheetArea = mat.getSheetWidthMm() * mat.getSheetHeightMm();
-                // Add ~15% waste factor for cuts and kerf
-                sheetsNeeded = (totalArea * 1.15f) / sheetArea;
+            List<SheetLayout> matLayouts = layoutsByMaterial.get(mat.getName());
+            Integer sheetCount = null;
+            Float offcutPercent = null;
+            if (matLayouts != null && !matLayouts.isEmpty()) {
+                sheetCount = matLayouts.size();
+                float totalOffcut = 0;
+                for (SheetLayout sl : matLayouts) {
+                    totalOffcut += sl.getOffcutPercent();
+                }
+                offcutPercent = totalOffcut / matLayouts.size();
             }
 
-            entries.add(new BomEntry(mat, materialParts.size(), totalArea, sheetsNeeded));
+            entries.add(new BomEntry(mat, materialParts.size(), totalArea, sheetCount, offcutPercent));
         }
 
         return entries;

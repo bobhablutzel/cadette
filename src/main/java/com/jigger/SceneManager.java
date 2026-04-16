@@ -1,3 +1,21 @@
+/*
+ * Copyright 2026 Bob Hablutzel
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Source: https://github.com/bobhablutzel/jigger
+ */
+
 package com.jigger;
 
 import com.jme3.app.SimpleApplication;
@@ -20,10 +38,12 @@ import com.jme3.scene.shape.Cylinder;
 import com.jme3.scene.shape.Sphere;
 
 import com.jigger.model.Assembly;
+import com.jigger.model.GuillotinePacker;
 import com.jigger.model.Joint;
 import com.jigger.model.JointRegistry;
 import com.jigger.model.Part;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +68,9 @@ public class SceneManager extends SimpleApplication {
     private final Map<String, Assembly> assemblies = new ConcurrentHashMap<>();
     private final JointRegistry jointRegistry = new JointRegistry();
     private final Map<String, Vector3f> rotations = new ConcurrentHashMap<>();  // degrees (x,y,z)
+    private float kerfMm = GuillotinePacker.DEFAULT_KERF_MM;
+    private volatile boolean cutSheetDirty = true;
+    private final List<Runnable> sceneChangeListeners = new ArrayList<>();
     private BitmapFont labelFont;
 
     /** Immutable record of the parameters used to create an object. */
@@ -116,6 +139,7 @@ public class SceneManager extends SimpleApplication {
         ColorRGBA color = part.getMaterial().getDisplayColor();
 
         parts.put(name, part);
+        markCutSheetDirty();
         records.put(name, new ObjectRecord(name, "box", position, size, color));
 
         Vector3f geomOffset = geomOffsetInNode("box", size);
@@ -164,6 +188,49 @@ public class SceneManager extends SimpleApplication {
 
     public JointRegistry getJointRegistry() {
         return jointRegistry;
+    }
+
+    public float getKerfMm() {
+        return kerfMm;
+    }
+
+    public void setKerfMm(float kerfMm) {
+        this.kerfMm = kerfMm;
+        markCutSheetDirty();
+    }
+
+    /**
+     * Mark the cut sheet as needing recomputation.
+     * Call this after modifying joints or other data that affects cut layouts.
+     */
+    public void markCutSheetDirty() {
+        cutSheetDirty = true;
+        for (Runnable listener : sceneChangeListeners) {
+            listener.run();
+        }
+    }
+
+    /**
+     * Register a listener to be notified when the scene changes in a way
+     * that affects cut sheets. Used by CutSheetPanel to trigger repaint.
+     */
+    public void addSceneChangeListener(Runnable listener) {
+        sceneChangeListeners.add(listener);
+    }
+
+    /**
+     * Returns true if parts/joints have changed since the last call to
+     * {@link #clearCutSheetDirty()}.
+     */
+    public boolean isCutSheetDirty() {
+        return cutSheetDirty;
+    }
+
+    /**
+     * Clear the dirty flag after a cut sheet recompute.
+     */
+    public void clearCutSheetDirty() {
+        cutSheetDirty = false;
     }
 
     private boolean statsVisible = false;
@@ -219,6 +286,7 @@ public class SceneManager extends SimpleApplication {
     public boolean resizeObject(String name, Vector3f newSize) {
         ObjectRecord rec = records.get(name);
         if (rec == null) return false;
+        if (parts.containsKey(name)) markCutSheetDirty();
         records.put(name, new ObjectRecord(name, rec.shapeType(), rec.position(), newSize, rec.color()));
         Vector3f geomOffset = geomOffsetInNode(rec.shapeType(), newSize);
         enqueue(() -> {
@@ -405,7 +473,7 @@ public class SceneManager extends SimpleApplication {
 
     public boolean deleteObject(String id) {
         ObjectRecord rec = records.remove(id);
-        parts.remove(id);
+        if (parts.remove(id) != null) markCutSheetDirty();
         rotations.remove(id);
         jointRegistry.removeJointsForPart(id);
         geometries.remove(id);
@@ -417,6 +485,7 @@ public class SceneManager extends SimpleApplication {
     }
 
     public void deleteAllObjects() {
+        markCutSheetDirty();
         enqueue(() -> {
             objectsNode.detachAllChildren();
             objectNodes.clear();

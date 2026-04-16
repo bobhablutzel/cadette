@@ -1,3 +1,21 @@
+/*
+ * Copyright 2026 Bob Hablutzel
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Source: https://github.com/bobhablutzel/jigger
+ */
+
 package com.jigger;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -50,8 +68,9 @@ class CutListBomTest extends HeadlessTestBase {
         assertTrue(bom.contains("4 pc"), "Should show 4 plywood parts");
         assertTrue(bom.contains("1 pc"), "Should show 1 hardboard part");
 
-        // Should estimate sheet count for sheet goods
-        assertTrue(bom.contains("sheets"), "Should estimate sheet count");
+        // Should show actual sheet count and offcut for sheet goods
+        assertTrue(bom.contains("sheet"), "Should show sheet count");
+        assertTrue(bom.contains("offcut"), "Should show offcut percentage");
     }
 
     @Test

@@ -16,10 +16,12 @@
  * Source: https://github.com/bobhablutzel/jigger
  */
 
-package com.jigger.model;
+package com.jigger;
 
-/** Whether the raw material has a grain direction. */
-public enum GrainDirection {
-    ALONG_LENGTH,
-    NONE
+/**
+ * Controls how the 3D viewport and cut sheet panels are arranged.
+ */
+public enum ViewLayoutMode {
+    TABBED,
+    SPLIT_PANE
 }
