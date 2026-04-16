@@ -61,6 +61,7 @@ public class JiggerApp {
         // MSAA: try 4x, but can be disabled with -Djigger.msaa=0 for GPUs that don't support it
         int msaa = Integer.getInteger("jigger.msaa", 4);
         settings.setSamples(msaa);
+        settings.setAudioRenderer(null);  // no audio needed for a CAD app
 
         sceneManager = new SceneManager();
         sceneManager.setPauseOnLostFocus(false);
