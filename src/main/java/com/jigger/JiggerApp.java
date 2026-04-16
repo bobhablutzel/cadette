@@ -55,7 +55,9 @@ public class JiggerApp {
         settings.setWidth(1280);
         settings.setHeight(600);
         settings.setFrameRate(60);
-        settings.setSamples(4);  // anti-aliasing
+        // MSAA: try 4x, but can be disabled with -Djigger.msaa=0 for GPUs that don't support it
+        int msaa = Integer.getInteger("jigger.msaa", 4);
+        settings.setSamples(msaa);
 
         sceneManager = new SceneManager();
         sceneManager.setPauseOnLostFocus(false);
