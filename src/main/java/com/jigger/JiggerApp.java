@@ -289,22 +289,43 @@ public class JiggerApp {
         tabBar.add(viewportTab);
         tabBar.add(cutSheetTab);
 
-        // Tab button state
+        // Tab button state: tracks which tab is active in tabbed mode
+        final boolean[] showingViewport = {true};
+
         Runnable updateTabColors = () -> {
-            boolean showingViewport = hSplitPane.getDividerLocation() > hSplitPane.getWidth() / 2;
-            viewportTab.setForeground(showingViewport ? tabActiveFg : tabInactiveFg);
-            cutSheetTab.setForeground(showingViewport ? tabInactiveFg : tabActiveFg);
+            viewportTab.setForeground(showingViewport[0] ? tabActiveFg : tabInactiveFg);
+            cutSheetTab.setForeground(showingViewport[0] ? tabInactiveFg : tabActiveFg);
+        };
+
+        // Re-pin the divider to the correct edge when in tabbed mode
+        Runnable pinDivider = () -> {
+            if (executor.getLayoutMode() == ViewLayoutMode.TABBED) {
+                if (showingViewport[0]) {
+                    hSplitPane.setDividerLocation(hSplitPane.getWidth() - hSplitPane.getDividerSize());
+                } else {
+                    hSplitPane.setDividerLocation(2);
+                }
+            }
         };
 
         viewportTab.addActionListener(e -> {
-            hSplitPane.setDividerLocation(1.0);
+            showingViewport[0] = true;
+            pinDivider.run();
             updateTabColors.run();
         });
         cutSheetTab.addActionListener(e -> {
-            // Keep viewport at a minimal width (2px) to preserve OpenGL context
-            hSplitPane.setDividerLocation(2);
+            showingViewport[0] = false;
+            pinDivider.run();
             cutSheetPanel.repaint();
             updateTabColors.run();
+        });
+
+        // Re-pin divider on resize so the hidden panel stays hidden
+        hSplitPane.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                pinDivider.run();
+            }
         });
 
         JPanel viewContainer = new JPanel(new BorderLayout());
@@ -316,7 +337,8 @@ public class JiggerApp {
                 hSplitPane.setDividerLocation((int) (frame.getWidth() * 0.6));
             } else {
                 tabBar.setVisible(true);
-                hSplitPane.setDividerLocation(1.0);
+                showingViewport[0] = true;
+                pinDivider.run();
                 updateTabColors.run();
             }
         };
