@@ -34,10 +34,9 @@
             <artifactId>jme3-desktop</artifactId>
             <version>${jme3.version}</version>
         </dependency>
-        <!-- LWJGL2 for reliable AWT canvas embedding (LWJGL3 blank-screens on Windows) -->
         <dependency>
             <groupId>org.jmonkeyengine</groupId>
-            <artifactId>jme3-lwjgl</artifactId>
+            <artifactId>jme3-lwjgl3</artifactId>
             <version>${jme3.version}</version>
         </dependency>
 

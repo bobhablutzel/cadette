@@ -41,6 +41,9 @@ public class JiggerApp {
     private static volatile boolean shuttingDown = false;
 
     public static void main(String[] args) {
+        // Prevent Java2D from using DirectDraw/D3D on Windows, which can conflict
+        // with LWJGL3's OpenGL context in the embedded canvas.
+        System.setProperty("sun.java2d.noddraw", "true");
         SwingUtilities.invokeLater(JiggerApp::createAndShowGUI);
     }
 
@@ -63,7 +66,9 @@ public class JiggerApp {
         sceneManager.setPauseOnLostFocus(false);
         sceneManager.setSettings(settings);
         sceneManager.createCanvas();
-        sceneManager.startCanvas();
+        // startCanvas() is called after frame.setVisible() — see below.
+        // LWJGL3 on Windows needs a realized native window before it can bind
+        // an OpenGL context; starting too early produces a blank canvas.
 
         JmeCanvasContext ctx = (JmeCanvasContext) sceneManager.getContext();
         Canvas canvas = ctx.getCanvas();
@@ -342,6 +347,11 @@ public class JiggerApp {
         });
 
         frame.setVisible(true);
+
+        // Start the jME3 canvas now that the frame is visible and the native
+        // window peer exists. This ordering is required on Windows where LWJGL3
+        // cannot bind an OpenGL context to an unrealized AWT canvas.
+        sceneManager.startCanvas();
 
         // Run startup script if it exists (~/.jigger/startup.jigs)
         String startupResult = executor.runStartupScript();
