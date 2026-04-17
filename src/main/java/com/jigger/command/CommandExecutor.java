@@ -427,18 +427,15 @@ public class CommandExecutor {
             suppressUndo = false;
         }
 
-        // Normalize assembly position: shift all parts so the bounding box min
-        // is at the target placement (default 0,0,0). This ensures the assembly's
-        // reference point is consistent with the "move" command.
+        // Normalize assembly position: shift all parts so the AABB min
+        // is at the target placement (default 0,0,0). Uses rotation-aware bounds.
         {
             com.jme3.math.Vector3f target = new com.jme3.math.Vector3f(
                     units.toMm(placement[0]),
                     units.toMm(placement[1]),
                     units.toMm(placement[2]));
-            com.jme3.math.Vector3f currentOrigin = assembly.getBoundingBoxMin(
-                    pn -> { var r = scene.getObjectRecord(pn); return r != null ? r.position() : null; },
-                    pn -> { var r = scene.getObjectRecord(pn); return r != null ? r.size() : null; });
-            com.jme3.math.Vector3f delta = target.subtract(currentOrigin);
+            com.jme3.math.Vector3f[] aabb = computeAssemblyAABB(createdParts);
+            com.jme3.math.Vector3f delta = target.subtract(aabb[0]);
             if (delta.lengthSquared() > 0.001f) {
                 for (Part part : createdParts) {
                     SceneManager.ObjectRecord rec = scene.getObjectRecord(part.getName());
@@ -459,29 +456,21 @@ public class CommandExecutor {
             Assembly refAssembly = scene.getAssembly(refName);
             SceneManager.ObjectRecord refRec = scene.getObjectRecord(refName);
             if (refAssembly == null && refRec == null) {
-                // Still return success but warn
-                posStr = " (warning: reference '" + refName + "' not found, placed at origin)";
+                // Undo the creation — clean up parts and assembly
+                for (Part part : createdParts.reversed()) {
+                    scene.deleteObject(part.getName());
+                }
+                scene.removeAssembly(instanceName);
+                return "Reference '" + refName + "' not found. Assembly not created.";
             } else {
                 com.jme3.math.Vector3f[] refBBox;
                 if (refAssembly != null) {
-                    var pl = (java.util.function.Function<String, com.jme3.math.Vector3f>)
-                            (String pn) -> { var r = scene.getObjectRecord(pn); return r != null ? r.position() : null; };
-                    var sl = (java.util.function.Function<String, com.jme3.math.Vector3f>)
-                            (String pn) -> { var r = scene.getObjectRecord(pn); return r != null ? r.size() : null; };
-                    refBBox = new com.jme3.math.Vector3f[]{
-                            refAssembly.getBoundingBoxMin(pl, sl),
-                            refAssembly.getBoundingBoxMax(pl, sl)};
+                    refBBox = computeAssemblyAABB(refAssembly.getParts());
                 } else {
-                    refBBox = new com.jme3.math.Vector3f[]{refRec.position(), refRec.position().add(refRec.size())};
+                    refBBox = scene.computeObjectAABB(refName);
                 }
 
-                var pl2 = (java.util.function.Function<String, com.jme3.math.Vector3f>)
-                        (String pn) -> { var r = scene.getObjectRecord(pn); return r != null ? r.position() : null; };
-                var sl2 = (java.util.function.Function<String, com.jme3.math.Vector3f>)
-                        (String pn) -> { var r = scene.getObjectRecord(pn); return r != null ? r.size() : null; };
-                com.jme3.math.Vector3f[] srcBBox = new com.jme3.math.Vector3f[]{
-                        assembly.getBoundingBoxMin(pl2, sl2),
-                        assembly.getBoundingBoxMax(pl2, sl2)};
+                com.jme3.math.Vector3f[] srcBBox = computeAssemblyAABB(createdParts);
 
                 com.jme3.math.Vector3f refMin = refBBox[0], refMax = refBBox[1];
                 com.jme3.math.Vector3f srcSize = srcBBox[1].subtract(srcBBox[0]);
@@ -594,7 +583,7 @@ public class CommandExecutor {
 
     private RelativePlacement extractRelativePlacement(String paramsStr, String[] remaining) {
         Pattern relPattern = Pattern.compile(
-                "(?i)to\\s+(left|right|behind|in[- ]front|above|below)\\s+of\\s+" +
+                "(?i)(?:to\\s+)?(left|right|behind|in[- ]front|above|below)\\s+(?:of\\s+)?" +
                 "(?:\"([^\"]+)\"|([a-zA-Z_][a-zA-Z0-9_-]*))" +
                 "(?:\\s+gap\\s+(-?[0-9]*\\.?[0-9]+))?");
         Matcher m = relPattern.matcher(paramsStr);
@@ -760,6 +749,27 @@ public class CommandExecutor {
     }
 
     // ======================== Utilities ========================
+
+    /** Compute rotation-aware AABB for a list of parts. */
+    private com.jme3.math.Vector3f[] computeAssemblyAABB(List<Part> parts) {
+        float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
+        float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
+        for (Part p : parts) {
+            com.jme3.math.Vector3f[] aabb = scene.computeObjectAABB(p.getName());
+            if (aabb != null) {
+                minX = Math.min(minX, aabb[0].x);
+                minY = Math.min(minY, aabb[0].y);
+                minZ = Math.min(minZ, aabb[0].z);
+                maxX = Math.max(maxX, aabb[1].x);
+                maxY = Math.max(maxY, aabb[1].y);
+                maxZ = Math.max(maxZ, aabb[1].z);
+            }
+        }
+        return new com.jme3.math.Vector3f[]{
+                new com.jme3.math.Vector3f(minX, minY, minZ),
+                new com.jme3.math.Vector3f(maxX, maxY, maxZ)
+        };
+    }
 
     private static String lowercaseOutsideQuotes(String input) {
         StringBuilder sb = new StringBuilder(input.length());

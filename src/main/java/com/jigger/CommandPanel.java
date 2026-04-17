@@ -56,6 +56,7 @@ public class CommandPanel extends JPanel {
         // Output area
         outputArea = new JTextArea();
         outputArea.setEditable(false);
+        outputArea.setFocusable(false);  // clicks don't steal focus from command input
         outputArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
         outputArea.setBackground(new Color(30, 30, 35));
         outputArea.setForeground(new Color(200, 200, 200));
@@ -121,6 +122,13 @@ public class CommandPanel extends JPanel {
             @Override public void actionPerformed(ActionEvent e) {
                 appendOutput(executor.redo() + "\n");
             }
+        });
+
+        // Ctrl+U = clear input line
+        inputField.getInputMap(JComponent.WHEN_FOCUSED)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_U, KeyEvent.CTRL_DOWN_MASK), "clearLine");
+        inputField.getActionMap().put("clearLine", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { inputField.setText(""); }
         });
 
         loadHistory();
@@ -194,9 +202,15 @@ public class CommandPanel extends JPanel {
         if (Files.exists(HISTORY_FILE)) {
             try {
                 List<String> lines = Files.readAllLines(HISTORY_FILE);
-                // Keep only the last MAX_HISTORY entries
-                int start = Math.max(0, lines.size() - MAX_HISTORY);
-                history.addAll(lines.subList(start, lines.size()));
+                // Deduplicate consecutive entries and keep the last MAX_HISTORY
+                for (String line : lines) {
+                    if (!line.isBlank() && (history.isEmpty() || !history.getLast().equals(line))) {
+                        history.add(line);
+                    }
+                }
+                while (history.size() > MAX_HISTORY) {
+                    history.removeFirst();
+                }
                 historyIndex = history.size();
             } catch (IOException ignored) {
             }

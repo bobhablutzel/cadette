@@ -42,9 +42,9 @@ class RelativePositionTest extends HeadlessTestBase {
         String result = exec("move b to right of a");
         assertFalse(result.contains("error"), "Should succeed: " + result);
 
-        // b's min X should be at a's max X
-        var aBBox = getAssemblyBBox("a");
-        var bBBox = getAssemblyBBox("b");
+        // b's AABB min X should be at a's AABB max X
+        var aBBox = getAssemblyAABB("a");
+        var bBBox = getAssemblyAABB("b");
         assertEquals(aBBox[1].x, bBBox[0].x, 1f, "b should be immediately right of a");
     }
 
@@ -55,8 +55,8 @@ class RelativePositionTest extends HeadlessTestBase {
 
         exec("move b to left of a");
 
-        var aBBox = getAssemblyBBox("a");
-        var bBBox = getAssemblyBBox("b");
+        var aBBox = getAssemblyAABB("a");
+        var bBBox = getAssemblyAABB("b");
         assertEquals(aBBox[0].x, bBBox[1].x, 1f, "b's right edge should meet a's left edge");
     }
 
@@ -67,8 +67,8 @@ class RelativePositionTest extends HeadlessTestBase {
 
         exec("move b to right of a gap 50");
 
-        var aBBox = getAssemblyBBox("a");
-        var bBBox = getAssemblyBBox("b");
+        var aBBox = getAssemblyAABB("a");
+        var bBBox = getAssemblyAABB("b");
         assertEquals(aBBox[1].x + 50f, bBBox[0].x, 1f, "Should have 50mm gap");
     }
 
@@ -78,8 +78,8 @@ class RelativePositionTest extends HeadlessTestBase {
         String result = exec("create base-cabinet \"b\" width 600 height 900 depth 400 to right of a");
         assertFalse(result.contains("error"), "Should succeed: " + result);
 
-        var aBBox = getAssemblyBBox("a");
-        var bBBox = getAssemblyBBox("b");
+        var aBBox = getAssemblyAABB("a");
+        var bBBox = getAssemblyAABB("b");
         assertEquals(aBBox[1].x, bBBox[0].x, 1f, "b should be right of a");
     }
 
@@ -88,8 +88,8 @@ class RelativePositionTest extends HeadlessTestBase {
         exec("create base-cabinet \"a\" width 600 height 900 depth 400");
         exec("create base-cabinet \"b\" width 600 height 900 depth 400 to right of a gap 25");
 
-        var aBBox = getAssemblyBBox("a");
-        var bBBox = getAssemblyBBox("b");
+        var aBBox = getAssemblyAABB("a");
+        var bBBox = getAssemblyAABB("b");
         assertEquals(aBBox[1].x + 25f, bBBox[0].x, 1f, "Should have 25mm gap");
     }
 
@@ -101,8 +101,8 @@ class RelativePositionTest extends HeadlessTestBase {
         String result = exec("move wc to above a");
         assertFalse(result.contains("error"), "Should succeed: " + result);
 
-        var aBBox = getAssemblyBBox("a");
-        var wBBox = getAssemblyBBox("wc");
+        var aBBox = getAssemblyAABB("a");
+        var wBBox = getAssemblyAABB("wc");
         assertEquals(aBBox[1].y, wBBox[0].y, 1f, "wc's bottom should meet a's top");
     }
 
@@ -112,16 +112,15 @@ class RelativePositionTest extends HeadlessTestBase {
         exec("create base-cabinet \"b\" width 500 height 900 depth 300");
         exec("create base-cabinet \"c\" width 400 height 900 depth 350");
 
-        // Move them apart first
         exec("move b to right of a");
         exec("move c to right of b");
 
         String result = exec("align front of b,c with a");
         assertTrue(result.contains("Aligned"), "Should confirm alignment");
 
-        var aBBox = getAssemblyBBox("a");
-        var bBBox = getAssemblyBBox("b");
-        var cBBox = getAssemblyBBox("c");
+        var aBBox = getAssemblyAABB("a");
+        var bBBox = getAssemblyAABB("b");
+        var cBBox = getAssemblyAABB("c");
         assertEquals(aBBox[1].z, bBBox[1].z, 1f, "b's front should match a's front");
         assertEquals(aBBox[1].z, cBBox[1].z, 1f, "c's front should match a's front");
     }
@@ -134,8 +133,8 @@ class RelativePositionTest extends HeadlessTestBase {
 
         exec("align back of b with a");
 
-        var aBBox = getAssemblyBBox("a");
-        var bBBox = getAssemblyBBox("b");
+        var aBBox = getAssemblyAABB("a");
+        var bBBox = getAssemblyAABB("b");
         assertEquals(aBBox[0].z, bBBox[0].z, 1f, "b's back should match a's back");
     }
 
@@ -147,8 +146,8 @@ class RelativePositionTest extends HeadlessTestBase {
 
         exec("align top of b with a");
 
-        var aBBox = getAssemblyBBox("a");
-        var bBBox = getAssemblyBBox("b");
+        var aBBox = getAssemblyAABB("a");
+        var bBBox = getAssemblyAABB("b");
         assertEquals(aBBox[1].y, bBBox[1].y, 1f, "b's top should match a's top");
     }
 
@@ -157,25 +156,34 @@ class RelativePositionTest extends HeadlessTestBase {
         exec("create base-cabinet \"a\" width 600 height 900 depth 400");
         exec("create base-cabinet \"b\" width 600 height 900 depth 400");
 
-        var origBBox = getAssemblyBBox("b");
+        var origBBox = getAssemblyAABB("b");
         exec("move b to right of a");
         exec("undo");
 
-        var restoredBBox = getAssemblyBBox("b");
+        var restoredBBox = getAssemblyAABB("b");
         assertEquals(origBBox[0].x, restoredBBox[0].x, 1f, "Should restore original position");
     }
 
-    // Helper to get assembly bounding box
-    private com.jme3.math.Vector3f[] getAssemblyBBox(String name) {
+    /** Get rotation-aware AABB for an assembly. */
+    private com.jme3.math.Vector3f[] getAssemblyAABB(String name) {
         Assembly assembly = sceneManager.getAssembly(name);
         assertNotNull(assembly, "Assembly " + name + " should exist");
-        java.util.function.Function<String, com.jme3.math.Vector3f> posLookup =
-                pn -> { var r = sceneManager.getObjectRecord(pn); return r != null ? r.position() : null; };
-        java.util.function.Function<String, com.jme3.math.Vector3f> sizeLookup =
-                pn -> { var r = sceneManager.getObjectRecord(pn); return r != null ? r.size() : null; };
+        float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
+        float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
+        for (var part : assembly.getParts()) {
+            var aabb = sceneManager.computeObjectAABB(part.getName());
+            if (aabb != null) {
+                minX = Math.min(minX, aabb[0].x);
+                minY = Math.min(minY, aabb[0].y);
+                minZ = Math.min(minZ, aabb[0].z);
+                maxX = Math.max(maxX, aabb[1].x);
+                maxY = Math.max(maxY, aabb[1].y);
+                maxZ = Math.max(maxZ, aabb[1].z);
+            }
+        }
         return new com.jme3.math.Vector3f[]{
-                assembly.getBoundingBoxMin(posLookup, sizeLookup),
-                assembly.getBoundingBoxMax(posLookup, sizeLookup)
+                new com.jme3.math.Vector3f(minX, minY, minZ),
+                new com.jme3.math.Vector3f(maxX, maxY, maxZ)
         };
     }
 }

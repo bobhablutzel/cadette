@@ -190,6 +190,48 @@ public class SceneManager extends SimpleApplication {
         return jointRegistry;
     }
 
+    /**
+     * Compute the world-space axis-aligned bounding box [min, max] for an object,
+     * accounting for rotation. Uses pure math from the ObjectRecord + stored rotation,
+     * independent of the render thread.
+     */
+    public Vector3f[] computeObjectAABB(String name) {
+        ObjectRecord rec = records.get(name);
+        if (rec == null) return null;
+
+        Vector3f pos = rec.position();
+        Vector3f size = rec.size();
+        Vector3f rotDeg = getRotation(name);
+
+        if (rotDeg.equals(Vector3f.ZERO)) {
+            // No rotation — simple case
+            return new Vector3f[]{pos.clone(), pos.add(size)};
+        }
+
+        // Compute AABB of the rotated box.
+        // The geometry center is at pos + halfSize (because of the geomOffset in the wrapper node).
+        // The wrapper node is rotated around its origin (pos), so we need to rotate the
+        // center offset and the half-extents.
+        Quaternion q = new Quaternion().fromAngles(
+                rotDeg.x * FastMath.DEG_TO_RAD,
+                rotDeg.y * FastMath.DEG_TO_RAD,
+                rotDeg.z * FastMath.DEG_TO_RAD);
+
+        Vector3f halfSize = new Vector3f(size.x / 2f, size.y / 2f, size.z / 2f);
+        Vector3f rotatedCenter = q.mult(halfSize).addLocal(pos);
+
+        // AABB extents of a rotated box: project each rotated axis onto world axes
+        com.jme3.math.Matrix3f rot = q.toRotationMatrix();
+        float ex = Math.abs(rot.get(0, 0)) * halfSize.x + Math.abs(rot.get(0, 1)) * halfSize.y + Math.abs(rot.get(0, 2)) * halfSize.z;
+        float ey = Math.abs(rot.get(1, 0)) * halfSize.x + Math.abs(rot.get(1, 1)) * halfSize.y + Math.abs(rot.get(1, 2)) * halfSize.z;
+        float ez = Math.abs(rot.get(2, 0)) * halfSize.x + Math.abs(rot.get(2, 1)) * halfSize.y + Math.abs(rot.get(2, 2)) * halfSize.z;
+
+        return new Vector3f[]{
+                new Vector3f(rotatedCenter.x - ex, rotatedCenter.y - ey, rotatedCenter.z - ez),
+                new Vector3f(rotatedCenter.x + ex, rotatedCenter.y + ey, rotatedCenter.z + ez)
+        };
+    }
+
     public float getKerfMm() {
         return kerfMm;
     }
@@ -478,10 +520,19 @@ public class SceneManager extends SimpleApplication {
         jointRegistry.removeJointsForPart(id);
         geometries.remove(id);
         Node wrapper = objectNodes.remove(id);
-        if (wrapper == null) return false;
         hideName(id);
-        enqueue(() -> wrapper.removeFromParent());
-        return true;
+        if (wrapper != null) {
+            enqueue(() -> wrapper.removeFromParent());
+        } else if (rec != null) {
+            // The create enqueue may not have run yet — schedule deferred cleanup.
+            // This runs after the pending create because enqueue is FIFO.
+            enqueue(() -> {
+                Node w = objectNodes.remove(id);
+                if (w != null) w.removeFromParent();
+                geometries.remove(id);
+            });
+        }
+        return rec != null;
     }
 
     public void deleteAllObjects() {

@@ -261,7 +261,7 @@ public class CommandVisitor extends JiggerCommandBaseVisitor<String> {
         String name = assembly.getName();
         String abbr = executor.getUnits().getAbbreviation();
 
-        Vector3f currentOrigin = assembly.getBoundingBoxMin(posLookup(), sizeLookup());
+        Vector3f currentOrigin = getBBox(name)[0];
 
         Vector3f delta = targetPos.subtract(currentOrigin);
         List<String> partNames = assembly.getParts().stream()
@@ -1023,12 +1023,13 @@ public class CommandVisitor extends JiggerCommandBaseVisitor<String> {
         }
         sb.append(String.format("  Parts:     %d%n", assembly.getParts().size()));
 
-        // Bounding box
-        Vector3f bbMin = assembly.getBoundingBoxMin(
-                pn -> { var r = scene.getObjectRecord(pn); return r != null ? r.position() : null; },
-                pn -> { var r = scene.getObjectRecord(pn); return r != null ? r.size() : null; });
+        // Bounding box (rotation-aware)
+        Vector3f[] aabb = getBBox(assembly.getName());
         sb.append(String.format("  Origin:    (%.2f, %.2f, %.2f) %s%n",
-                fromMm(bbMin.x), fromMm(bbMin.y), fromMm(bbMin.z), abbr));
+                fromMm(aabb[0].x), fromMm(aabb[0].y), fromMm(aabb[0].z), abbr));
+        sb.append(String.format("  Size:      (%.2f, %.2f, %.2f) %s%n",
+                fromMm(aabb[1].x - aabb[0].x), fromMm(aabb[1].y - aabb[0].y),
+                fromMm(aabb[1].z - aabb[0].z), abbr));
 
         // List parts
         sb.append("\n  Parts:\n");
@@ -1323,20 +1324,32 @@ public class CommandVisitor extends JiggerCommandBaseVisitor<String> {
         return pn -> { var r = scene.getObjectRecord(pn); return r != null ? r.size() : null; };
     }
 
-    /** Get bounding box [min, max] for a name — assembly or individual object. Returns null if not found. */
+    /** Get bounding box [min, max] for a name — assembly or individual object. Returns null if not found.
+     *  Uses rotation-aware AABB computation. */
     private Vector3f[] getBBox(String name) {
         Assembly assembly = scene.getAssembly(name);
         if (assembly != null) {
+            // Compute assembly AABB from the union of all part AABBs
+            float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
+            float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
+            for (Part p : assembly.getParts()) {
+                Vector3f[] partBBox = scene.computeObjectAABB(p.getName());
+                if (partBBox != null) {
+                    minX = Math.min(minX, partBBox[0].x);
+                    minY = Math.min(minY, partBBox[0].y);
+                    minZ = Math.min(minZ, partBBox[0].z);
+                    maxX = Math.max(maxX, partBBox[1].x);
+                    maxY = Math.max(maxY, partBBox[1].y);
+                    maxZ = Math.max(maxZ, partBBox[1].z);
+                }
+            }
             return new Vector3f[]{
-                    assembly.getBoundingBoxMin(posLookup(), sizeLookup()),
-                    assembly.getBoundingBoxMax(posLookup(), sizeLookup())
+                    new Vector3f(minX, minY, minZ),
+                    new Vector3f(maxX, maxY, maxZ)
             };
         }
-        SceneManager.ObjectRecord rec = scene.getObjectRecord(name);
-        if (rec != null) {
-            return new Vector3f[]{rec.position(), rec.position().add(rec.size())};
-        }
-        return null;
+        // Individual object
+        return scene.computeObjectAABB(name);
     }
 
     /**
