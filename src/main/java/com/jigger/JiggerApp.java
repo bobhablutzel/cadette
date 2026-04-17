@@ -256,14 +256,17 @@ public class JiggerApp {
 
         viewportPanel.add(bottomBar, BorderLayout.SOUTH);
 
-        // -- Cut sheet panel --
+        // -- Cut sheet panel (scrollable) --
         CutSheetPanel cutSheetPanel = new CutSheetPanel(sceneManager, executor::getUnits);
+        JScrollPane cutSheetScroll = new JScrollPane(cutSheetPanel);
+        cutSheetScroll.setBorder(null);
+        cutSheetScroll.getVerticalScrollBar().setUnitIncrement(40);
 
         // -- View layout: permanent horizontal JSplitPane --
         // The jME3 AWT Canvas cannot be reparented (moving it between containers
         // invalidates the OpenGL context and crashes GPU drivers). So we use a
         // permanent JSplitPane and control the divider position to show/hide panels.
-        JSplitPane hSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, viewportPanel, cutSheetPanel);
+        JSplitPane hSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, viewportPanel, cutSheetScroll);
         hSplitPane.setResizeWeight(0.6);
         hSplitPane.setContinuousLayout(true);
 

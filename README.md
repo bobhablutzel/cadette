@@ -115,7 +115,7 @@ export cutsheet png "cuts.png"  — export as PNG image
 export cutsheet jpg          — export as JPEG
 ```
 
-Cut sheets update automatically when parts change (dirty-flag lazy recompute).
+Cut sheets update automatically when parts change (dirty-flag lazy recompute). The view scrolls vertically when sheets overflow the viewport.
 
 ### Inspection
 
