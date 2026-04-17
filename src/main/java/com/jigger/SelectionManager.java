@@ -49,8 +49,10 @@ public class SelectionManager {
 
     /**
      * Select by geometry name (as found by ray cast).
-     * The geometry name matches the part/object name. If the part belongs
-     * to an assembly, the assembly is selected instead.
+     * Uses PowerPoint-style two-level selection:
+     *   1. First click on a part in an assembly → selects the assembly
+     *   2. Click again on a part within the already-selected assembly → drills down to that part
+     *   3. Click a part in a different assembly → selects that assembly
      */
     public void selectByPartName(String partName) {
         if (partName == null) {
@@ -65,16 +67,21 @@ public class SelectionManager {
             assemblyName = partName.substring(0, slash);
         }
 
-        // Verify the assembly exists
         if (assemblyName != null && sceneManager.getAssembly(assemblyName) != null) {
-            select(assemblyName, true);
+            if (isAssembly && assemblyName.equals(selectedName)) {
+                // Already have the assembly selected — drill down to the individual part
+                select(partName, false);
+            } else {
+                // Select the assembly
+                select(assemblyName, true);
+            }
         } else {
             select(partName, false);
         }
     }
 
     private void select(String name, boolean assembly) {
-        if (name.equals(selectedName)) return;  // already selected
+        if (name.equals(selectedName) && isAssembly == assembly) return;  // already selected
         selectedName = name;
         isAssembly = assembly;
         fireEvent();
