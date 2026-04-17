@@ -23,6 +23,9 @@ import com.jigger.model.SheetLayoutGenerator;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.util.*;
 import java.util.List;
 import java.util.function.Supplier;
 
@@ -30,6 +33,7 @@ import java.util.function.Supplier;
  * Swing panel that displays cut sheet layouts using Java2D.
  * Checks the SceneManager's dirty flag and lazy-recomputes layouts on paint.
  * Delegates all rendering to {@link CutSheetRenderer}.
+ * Supports click-to-select with the same rules as the 3D viewport.
  * Implements Scrollable for vertical scrolling when content exceeds the viewport.
  */
 public class CutSheetPanel extends JPanel implements javax.swing.Scrollable {
@@ -37,12 +41,52 @@ public class CutSheetPanel extends JPanel implements javax.swing.Scrollable {
     private final SceneManager sceneManager;
     private final Supplier<UnitSystem> unitsSupplier;
     private List<SheetLayout> cachedLayouts = List.of();
+    private Set<String> selectedParts = Set.of();
+    private final List<CutSheetRenderer.PartRect> hitRects = new ArrayList<>();
+    private SelectionManager selectionManager;
 
     public CutSheetPanel(SceneManager sceneManager, Supplier<UnitSystem> unitsSupplier) {
         this.sceneManager = sceneManager;
         this.unitsSupplier = unitsSupplier;
         setBackground(CutSheetRenderer.BACKGROUND);
         sceneManager.addSceneChangeListener(() -> SwingUtilities.invokeLater(this::refreshLayouts));
+
+        addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                handleClick(e);
+            }
+        });
+    }
+
+    public void setSelectionManager(SelectionManager selectionManager) {
+        this.selectionManager = selectionManager;
+        selectionManager.addSelectionListener(event -> {
+            // Update highlighted parts and repaint
+            selectedParts = new HashSet<>(selectionManager.getSelectedPartNames());
+            SwingUtilities.invokeLater(CutSheetPanel.this::repaint);
+        });
+    }
+
+    private void handleClick(MouseEvent e) {
+        if (selectionManager == null) return;
+
+        boolean shiftDown = e.isShiftDown();
+        int mx = e.getX(), my = e.getY();
+
+        // Find which part rectangle was clicked (iterate in reverse for topmost)
+        for (int i = hitRects.size() - 1; i >= 0; i--) {
+            CutSheetRenderer.PartRect pr = hitRects.get(i);
+            if (pr.rect().contains(mx, my)) {
+                selectionManager.selectByPartName(pr.partName(), shiftDown);
+                return;
+            }
+        }
+
+        // Clicked empty space
+        if (!shiftDown) {
+            selectionManager.deselect();
+        }
     }
 
     private void refreshLayouts() {
@@ -59,16 +103,16 @@ public class CutSheetPanel extends JPanel implements javax.swing.Scrollable {
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
 
-        // In case paint is called before the listener (e.g. tab switch)
         if (sceneManager.isCutSheetDirty()) {
             cachedLayouts = SheetLayoutGenerator.generateLayouts(
                     sceneManager.getAllParts(), sceneManager.getKerfMm());
             sceneManager.clearCutSheetDirty();
         }
 
+        hitRects.clear();
         Graphics2D g2 = (Graphics2D) g.create();
         CutSheetRenderer.render(g2, getWidth(), getHeight(), cachedLayouts,
-                unitsSupplier.get(), false);
+                unitsSupplier.get(), false, selectedParts, hitRects);
         g2.dispose();
     }
 
@@ -76,7 +120,6 @@ public class CutSheetPanel extends JPanel implements javax.swing.Scrollable {
     public Dimension getPreferredSize() {
         int width = getParent() != null ? getParent().getWidth() : 800;
         int contentHeight = CutSheetRenderer.computeTotalHeight(width, cachedLayouts);
-        // Ensure we're at least as tall as the viewport so content fills the space
         int viewportHeight = getParent() != null ? getParent().getHeight() : contentHeight;
         return new Dimension(width, Math.max(contentHeight, viewportHeight));
     }
@@ -100,13 +143,11 @@ public class CutSheetPanel extends JPanel implements javax.swing.Scrollable {
 
     @Override
     public boolean getScrollableTracksViewportWidth() {
-        return true;  // fill the viewport width — no horizontal scrollbar
+        return true;
     }
 
     @Override
     public boolean getScrollableTracksViewportHeight() {
-        // Track viewport height when content fits (fill the space);
-        // stop tracking when content overflows (enable scrolling)
         if (getParent() instanceof javax.swing.JViewport viewport) {
             int contentHeight = CutSheetRenderer.computeTotalHeight(viewport.getWidth(), cachedLayouts);
             return contentHeight <= viewport.getHeight();

@@ -125,26 +125,21 @@ public class JiggerApp {
             }
             previousHighlights.clear();
 
-            if (event.name() != null) {
-                // Apply new highlights
-                java.util.List<String> parts = selectionManager.getSelectedPartNames();
-                for (String name : parts) {
-                    sceneManager.setHighlight(name, true);
-                }
-                previousHighlights.addAll(parts);
+            // Apply new highlights
+            java.util.List<String> parts = selectionManager.getSelectedPartNames();
+            for (String name : parts) {
+                sceneManager.setHighlight(name, true);
+            }
+            previousHighlights.addAll(parts);
 
-                // Show selection info in command output
-                String info;
-                if (event.isAssembly()) {
-                    info = String.format("Selected assembly '%s'", event.name());
-                    if (event.templateName() != null) info += " [" + event.templateName() + "]";
-                    info += " (" + event.partCount() + " parts)";
-                } else {
-                    info = "Selected '" + event.name() + "'";
-                }
-                String finalInfo = info;
+            // Show selection info in command output
+            java.util.List<String> names = event.selectedNames();
+            if (!names.isEmpty()) {
+                String info = names.size() == 1
+                        ? "Selected '" + names.getFirst() + "'"
+                        : "Selected " + names.size() + " objects: " + String.join(", ", names);
                 javax.swing.SwingUtilities.invokeLater(
-                        () -> commandPanel.appendOutput(finalInfo + "\n"));
+                        () -> commandPanel.appendOutput(info + "\n"));
             }
         });
 
@@ -293,6 +288,7 @@ public class JiggerApp {
 
         // -- Cut sheet panel (scrollable) --
         CutSheetPanel cutSheetPanel = new CutSheetPanel(sceneManager, executor::getUnits);
+        cutSheetPanel.setSelectionManager(selectionManager);
         JScrollPane cutSheetScroll = new JScrollPane(cutSheetPanel);
         cutSheetScroll.setBorder(null);
         cutSheetScroll.getVerticalScrollBar().setUnitIncrement(40);

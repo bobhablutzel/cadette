@@ -20,119 +20,154 @@ package com.jigger;
 
 import com.jigger.model.Assembly;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.util.function.Consumer;
 
 /**
- * Tracks the currently selected object or assembly.
- * Clicking a part that belongs to an assembly selects the assembly.
- * Notifies listeners on selection change.
+ * Tracks selected objects and assemblies.
+ * <p>
+ * Click behavior:
+ *   - Click a part in an assembly → selects the assembly
+ *   - Click again on a part in the already-selected assembly → drills down to that part
+ *   - Shift+click → toggle add/remove from selection
+ *   - Click empty space → deselect all
  */
 public class SelectionManager {
 
     private final SceneManager sceneManager;
-    private String selectedName;       // assembly name or standalone part/object name
-    private boolean isAssembly;
-    private final List<Consumer<SelectionEvent>> listeners = new ArrayList<>();
+    private final LinkedHashMap<String, Boolean> selected = new LinkedHashMap<>(); // name → isAssembly
+    private final List<Consumer<SelectionChange>> listeners = new ArrayList<>();
 
-    public record SelectionEvent(String name, boolean isAssembly, String templateName, int partCount) {
-        /** Creates an empty (deselect) event. */
-        static SelectionEvent empty() {
-            return new SelectionEvent(null, false, null, 0);
-        }
-    }
+    public record SelectionChange(List<String> selectedNames, String lastChanged) {}
 
     public SelectionManager(SceneManager sceneManager) {
         this.sceneManager = sceneManager;
     }
 
     /**
-     * Select by geometry name (as found by ray cast).
-     * Uses PowerPoint-style two-level selection:
-     *   1. First click on a part in an assembly → selects the assembly
-     *   2. Click again on a part within the already-selected assembly → drills down to that part
-     *   3. Click a part in a different assembly → selects that assembly
+     * Select by geometry name, with optional shift for multi-select.
+     * <p>
+     * Rules:
+     *   - An assembly and its individual parts cannot be selected simultaneously.
+     *   - If the assembly is selected as a whole, clicking a part in it drills down
+     *     (replaces assembly selection with that part). Shift-click does nothing.
+     *   - If individual parts of an assembly are selected, shift-click on another
+     *     part in the same assembly toggles that part (stays at part level).
      */
-    public void selectByPartName(String partName) {
+    public void selectByPartName(String partName, boolean shiftDown) {
         if (partName == null) {
-            deselect();
+            if (!shiftDown) deselect();
             return;
         }
 
-        // Check if this part belongs to an assembly (name contains "/")
+        // Resolve assembly membership
         String assemblyName = null;
         int slash = partName.indexOf('/');
         if (slash > 0) {
-            assemblyName = partName.substring(0, slash);
+            String candidate = partName.substring(0, slash);
+            if (sceneManager.getAssembly(candidate) != null) {
+                assemblyName = candidate;
+            }
         }
 
-        if (assemblyName != null && sceneManager.getAssembly(assemblyName) != null) {
-            if (isAssembly && assemblyName.equals(selectedName)) {
-                // Already have the assembly selected — drill down to the individual part
-                select(partName, false);
+        if (assemblyName != null) {
+            // Clicked part belongs to an assembly
+            if (selected.containsKey(assemblyName) && Boolean.TRUE.equals(selected.get(assemblyName))) {
+                // Assembly is selected as a whole
+                if (shiftDown) {
+                    // Shift-click on a part of an already-selected assembly → do nothing
+                    return;
+                }
+                // Drill down: replace assembly selection with this individual part
+                selected.clear();
+                selected.put(partName, false);
+            } else if (hasPartsOfAssembly(assemblyName)) {
+                // Individual parts of this assembly are already selected
+                if (shiftDown) {
+                    // Toggle this specific part
+                    if (selected.containsKey(partName)) {
+                        selected.remove(partName);
+                    } else {
+                        selected.put(partName, false);
+                    }
+                } else {
+                    // Replace with just this part
+                    selected.clear();
+                    selected.put(partName, false);
+                }
             } else {
-                // Select the assembly
-                select(assemblyName, true);
+                // No parts of this assembly are selected — select the assembly
+                if (shiftDown) {
+                    selected.put(assemblyName, true);
+                } else {
+                    selected.clear();
+                    selected.put(assemblyName, true);
+                }
             }
         } else {
-            select(partName, false);
+            // Standalone object (not in an assembly)
+            if (shiftDown) {
+                if (selected.containsKey(partName)) {
+                    selected.remove(partName);
+                } else {
+                    selected.put(partName, false);
+                }
+            } else {
+                selected.clear();
+                selected.put(partName, false);
+            }
         }
+
+        fireEvent(partName);
     }
 
-    private void select(String name, boolean assembly) {
-        if (name.equals(selectedName) && isAssembly == assembly) return;  // already selected
-        selectedName = name;
-        isAssembly = assembly;
-        fireEvent();
+    /** Check if any individually-selected parts belong to the given assembly. */
+    private boolean hasPartsOfAssembly(String assemblyName) {
+        String prefix = assemblyName + "/";
+        return selected.keySet().stream()
+                .anyMatch(name -> name.startsWith(prefix));
     }
 
     public void deselect() {
-        if (selectedName == null) return;
-        selectedName = null;
-        isAssembly = false;
-        fireEvent();
+        if (selected.isEmpty()) return;
+        selected.clear();
+        fireEvent(null);
     }
 
-    public String getSelectedName() {
-        return selectedName;
+    /** Get all selected names. */
+    public List<String> getSelectedNames() {
+        return List.copyOf(selected.keySet());
     }
 
-    public boolean isAssemblySelected() {
-        return isAssembly;
+    /** Check if a specific name is selected. */
+    public boolean isSelected(String name) {
+        return selected.containsKey(name);
     }
 
-    /** Get all part names that are part of the current selection (for highlighting). */
+    /** Get all part names that should be highlighted (expanding assemblies to their parts). */
     public List<String> getSelectedPartNames() {
-        if (selectedName == null) return List.of();
-        if (isAssembly) {
-            Assembly assembly = sceneManager.getAssembly(selectedName);
-            if (assembly != null) {
-                return assembly.getParts().stream()
-                        .map(com.jigger.model.Part::getName)
-                        .toList();
+        List<String> parts = new ArrayList<>();
+        for (var entry : selected.entrySet()) {
+            if (entry.getValue()) {
+                // Assembly — expand to all parts
+                Assembly assembly = sceneManager.getAssembly(entry.getKey());
+                if (assembly != null) {
+                    assembly.getParts().forEach(p -> parts.add(p.getName()));
+                }
+            } else {
+                parts.add(entry.getKey());
             }
         }
-        return List.of(selectedName);
+        return parts;
     }
 
-    public void addSelectionListener(Consumer<SelectionEvent> listener) {
+    public void addSelectionListener(Consumer<SelectionChange> listener) {
         listeners.add(listener);
     }
 
-    private void fireEvent() {
-        SelectionEvent event;
-        if (selectedName == null) {
-            event = SelectionEvent.empty();
-        } else if (isAssembly) {
-            Assembly assembly = sceneManager.getAssembly(selectedName);
-            event = new SelectionEvent(selectedName, true,
-                    assembly != null ? assembly.getTemplateName() : null,
-                    assembly != null ? assembly.getParts().size() : 0);
-        } else {
-            event = new SelectionEvent(selectedName, false, null, 1);
-        }
-        for (Consumer<SelectionEvent> listener : listeners) {
+    private void fireEvent(String lastChanged) {
+        SelectionChange event = new SelectionChange(getSelectedNames(), lastChanged);
+        for (Consumer<SelectionChange> listener : listeners) {
             listener.accept(event);
         }
     }

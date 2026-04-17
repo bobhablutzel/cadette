@@ -165,17 +165,25 @@ public class CutSheetExporter {
             float pw = part.getWidthOnSheet() * scale;
             float ph = part.getHeightOnSheet() * scale;
 
-            // Part fill
-            Color fillColor = part.isRotated()
-                    ? CutSheetRenderer.PART_ROTATED_FILL
-                    : CutSheetRenderer.PART_FILL;
-            setFillColor(cs, fillColor);
+            // Part fill (same color for all parts)
+            setFillColor(cs, CutSheetRenderer.PART_FILL);
             cs.addRect(px, py, pw, ph);
             cs.fill();
 
             // Grain lines
             if (part.getGrainRequirement() != GrainRequirement.ANY) {
                 drawPdfGrainLines(cs, px, py, pw, ph, part.isRotated());
+            }
+
+            // Rotation indicator
+            if (part.isRotated() && pw > 14 && ph > 14) {
+                setFillColor(cs, CutSheetRenderer.DIM_COLOR);
+                cs.beginText();
+                cs.setFont(fontNormal, 8);
+                // PDF Y is inverted — top-left corner of the part
+                cs.newLineAtOffset(px + 3, py + ph - 10);
+                cs.showText("\u21BA");
+                cs.endText();
             }
 
             // Part border

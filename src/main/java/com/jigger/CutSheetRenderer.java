@@ -25,6 +25,7 @@ import java.awt.*;
 import java.awt.geom.Line2D;
 import java.awt.geom.Rectangle2D;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Renders cut sheet layouts to any Graphics2D target.
@@ -43,6 +44,10 @@ public class CutSheetRenderer {
     static final Color TEXT_COLOR = new Color(40, 30, 20);
     static final Color DIM_COLOR = new Color(80, 80, 80);
     static final Color EMPTY_TEXT_COLOR = new Color(140, 140, 140);
+    static final Color SELECTION_BORDER = new Color(40, 120, 255);
+
+    /** Screen rectangle for a rendered part, used for click hit-testing. */
+    public record PartRect(String partName, Rectangle2D.Float rect) {}
 
     // For export: use a light background instead of the dark UI background
     static final Color EXPORT_BACKGROUND = Color.WHITE;
@@ -51,19 +56,29 @@ public class CutSheetRenderer {
     static final int SHEET_GAP = 40;
     static final int HEADER_HEIGHT = 24;
 
-    /**
-     * Render all sheet layouts onto the given Graphics2D.
-     *
-     * @param g2      the graphics context to draw on
-     * @param width   available width in pixels
-     * @param height  available height in pixels
-     * @param layouts the sheet layouts to render
-     * @param units   the unit system for dimension labels
-     * @param forExport if true, use export-friendly colors (white background)
-     */
+    /** Render without selection or hit-testing (for export). */
     public static void render(Graphics2D g2, int width, int height,
                               List<SheetLayout> layouts, UnitSystem units,
                               boolean forExport) {
+        render(g2, width, height, layouts, units, forExport, Set.of(), null);
+    }
+
+    /**
+     * Render all sheet layouts onto the given Graphics2D.
+     *
+     * @param g2            the graphics context to draw on
+     * @param width         available width in pixels
+     * @param height        available height in pixels
+     * @param layouts       the sheet layouts to render
+     * @param units         the unit system for dimension labels
+     * @param forExport     if true, use export-friendly colors (white background)
+     * @param selectedParts part names to highlight with a selection border
+     * @param hitRects      if non-null, populated with screen rectangles for hit-testing
+     */
+    public static void render(Graphics2D g2, int width, int height,
+                              List<SheetLayout> layouts, UnitSystem units,
+                              boolean forExport, Set<String> selectedParts,
+                              List<PartRect> hitRects) {
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 
@@ -98,7 +113,7 @@ public class CutSheetRenderer {
                 rowHeight = 0;
             }
 
-            drawSheet(g2, layout, x, y, scale, units, i + 1, forExport);
+            drawSheet(g2, layout, x, y, scale, units, i + 1, forExport, selectedParts, hitRects);
 
             x += sheetW + SHEET_GAP;
             rowHeight = Math.max(rowHeight, sheetH);
@@ -147,7 +162,8 @@ public class CutSheetRenderer {
 
     private static void drawSheet(Graphics2D g2, SheetLayout layout, int ox, int oy,
                                    float scale, UnitSystem units, int sheetNumber,
-                                   boolean forExport) {
+                                   boolean forExport, Set<String> selectedParts,
+                                   List<PartRect> hitRects) {
         float sw = layout.getSheetWidthMm() * scale;
         float sh = layout.getSheetHeightMm() * scale;
 
@@ -177,8 +193,8 @@ public class CutSheetRenderer {
             float pw = part.getWidthOnSheet() * scale;
             float ph = part.getHeightOnSheet() * scale;
 
-            // Fill
-            g2.setColor(part.isRotated() ? PART_ROTATED_FILL : PART_FILL);
+            // Fill (same color for all parts)
+            g2.setColor(PART_FILL);
             g2.fill(new Rectangle2D.Float(px, py, pw, ph));
 
             // Grain lines (if grain-constrained)
@@ -186,13 +202,32 @@ public class CutSheetRenderer {
                 drawGrainLines(g2, px, py, pw, ph, part.isRotated());
             }
 
-            // Border
-            g2.setColor(PART_BORDER);
-            g2.setStroke(new BasicStroke(1f));
+            // Rotation indicator
+            if (part.isRotated() && pw > 14 && ph > 14) {
+                g2.setColor(DIM_COLOR);
+                g2.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 10));
+                g2.drawString("\u21BA", px + 3, py + 12);
+            }
+
+            // Border (thicker + blue if selected)
+            boolean isSelected = selectedParts.contains(part.getPartName());
+            if (isSelected) {
+                g2.setColor(SELECTION_BORDER);
+                g2.setStroke(new BasicStroke(3f));
+            } else {
+                g2.setColor(PART_BORDER);
+                g2.setStroke(new BasicStroke(1f));
+            }
             g2.draw(new Rectangle2D.Float(px, py, pw, ph));
 
             // Label: part name + dimensions
             drawPartLabel(g2, part, px, py, pw, ph, units);
+
+            // Record hit rect for click detection
+            if (hitRects != null) {
+                hitRects.add(new PartRect(part.getPartName(),
+                        new Rectangle2D.Float(px, py, pw, ph)));
+            }
         }
 
         // Sheet dimensions along edges

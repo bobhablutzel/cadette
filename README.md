@@ -145,14 +145,15 @@ Cut sheets update automatically when parts change (dirty-flag lazy recompute). T
 
 ### Mouse Selection
 
-Click on an object in the 3D viewport to select it. Selected objects are highlighted with a blue tint and wireframe overlay. Click empty space to deselect.
+Click on an object in the 3D viewport or cut sheet view to select it. Selected objects are highlighted with a blue silhouette outline (3D) and blue border (cut sheet). Click empty space to deselect. Selection is synchronized between both views.
 
 Selection uses PowerPoint-style two-level drill-down:
 1. **First click** on a part in an assembly selects the **entire assembly** (all parts highlighted)
 2. **Second click** on a specific part within the selected assembly drills down to **just that part**
 3. Clicking a part in a **different** assembly selects that assembly
+4. **Shift+click** adds/removes from the selection (multi-select)
 
-Selection info is printed in the command output panel.
+Selection clears automatically when the scene changes (creating/deleting parts). Selection info is printed in the command output panel.
 
 ### Inspection
 

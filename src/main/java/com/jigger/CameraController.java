@@ -66,6 +66,7 @@ public class CameraController extends BaseAppState implements AnalogListener, Ac
     private static final String ZOOM_OUT     = "CAM_ZOOM_OUT";
     private static final String ROTATE_DRAG  = "CAM_ROTATE_DRAG";
     private static final String PAN_DRAG     = "CAM_PAN_DRAG";
+    private static final String SHIFT_KEY    = "CAM_SHIFT";
 
     private static final float KEYBOARD_SPEED = 2.0f;   // radians/sec
     private static final float MOUSE_SPEED    = 4.0f;
@@ -88,6 +89,7 @@ public class CameraController extends BaseAppState implements AnalogListener, Ac
 
     // Click detection: track mouse position on left-press
     private Vector2f leftPressPos = null;
+    private boolean shiftHeld = false;
     private SelectionManager selectionManager;
     private Node pickableNode;  // the node to ray-cast against (objectsNode)
 
@@ -123,8 +125,10 @@ public class CameraController extends BaseAppState implements AnalogListener, Ac
         // Button triggers
         inputManager.addMapping(ROTATE_DRAG, new MouseButtonTrigger(MouseInput.BUTTON_RIGHT));
         inputManager.addMapping(PAN_DRAG,    new MouseButtonTrigger(MouseInput.BUTTON_LEFT));
+        inputManager.addMapping(SHIFT_KEY,   new KeyTrigger(KeyInput.KEY_LSHIFT),
+                                             new KeyTrigger(KeyInput.KEY_RSHIFT));
 
-        inputManager.addListener((ActionListener) this, ROTATE_DRAG, PAN_DRAG);
+        inputManager.addListener((ActionListener) this, ROTATE_DRAG, PAN_DRAG, SHIFT_KEY);
         inputManager.addListener((AnalogListener) this,
                 KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN,
                 MOUSE_LEFT, MOUSE_RIGHT, MOUSE_UP, MOUSE_DOWN,
@@ -145,17 +149,16 @@ public class CameraController extends BaseAppState implements AnalogListener, Ac
     public void onAction(String name, boolean isPressed, float tpf) {
         switch (name) {
             case ROTATE_DRAG -> rotating = isPressed;
+            case SHIFT_KEY -> shiftHeld = isPressed;
             case PAN_DRAG -> {
                 panning = isPressed;
                 if (isPressed) {
-                    // Record mouse position on press
                     leftPressPos = inputManager.getCursorPosition().clone();
                 } else if (leftPressPos != null) {
-                    // On release, check if it was a click (minimal movement)
                     Vector2f releasePos = inputManager.getCursorPosition();
                     float dist = leftPressPos.distance(releasePos);
                     if (dist < CLICK_THRESHOLD) {
-                        handleClick(releasePos);
+                        handleClick(releasePos, shiftHeld);
                     }
                     leftPressPos = null;
                 }
@@ -164,7 +167,7 @@ public class CameraController extends BaseAppState implements AnalogListener, Ac
     }
 
     /** Ray cast from the camera through the click point and select the hit object. */
-    private void handleClick(Vector2f screenPos) {
+    private void handleClick(Vector2f screenPos, boolean shiftDown) {
         if (selectionManager == null || pickableNode == null) return;
 
         // Build a ray from the camera through the click point
@@ -178,17 +181,24 @@ public class CameraController extends BaseAppState implements AnalogListener, Ac
         pickableNode.collideWith(ray, results);
 
         if (results.size() > 0) {
-            // Find the closest hit and walk up to the wrapper node
-            CollisionResult closest = results.getClosestCollision();
-            String partName = resolvePartName(closest.getGeometry());
-            if (partName != null) {
-                selectionManager.selectByPartName(partName);
-                return;
+            // Skip outline geometries (they're not real objects)
+            for (int i = 0; i < results.size(); i++) {
+                CollisionResult hit = results.getCollision(i);
+                String geomName = hit.getGeometry().getName();
+                if (geomName != null && geomName.startsWith("outline_")) continue;
+
+                String partName = resolvePartName(hit.getGeometry());
+                if (partName != null) {
+                    selectionManager.selectByPartName(partName, shiftDown);
+                    return;
+                }
             }
         }
 
-        // Clicked empty space — deselect
-        selectionManager.deselect();
+        // Clicked empty space — deselect all (unless shift is held)
+        if (!shiftDown) {
+            selectionManager.deselect();
+        }
     }
 
     /**

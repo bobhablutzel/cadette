@@ -33,6 +33,7 @@ import com.jme3.scene.control.BillboardControl;
 import com.jme3.renderer.queue.RenderQueue;
 import com.jme3.scene.Geometry;
 import com.jme3.scene.Node;
+import com.jme3.scene.Spatial;
 import com.jme3.scene.shape.Box;
 import com.jme3.scene.shape.Cylinder;
 import com.jme3.scene.shape.Sphere;
@@ -248,6 +249,9 @@ public class SceneManager extends SimpleApplication {
      */
     public void markCutSheetDirty() {
         cutSheetDirty = true;
+        if (selectionManager != null) {
+            selectionManager.deselect();
+        }
         for (Runnable listener : sceneChangeListeners) {
             listener.run();
         }
@@ -569,8 +573,11 @@ public class SceneManager extends SimpleApplication {
         return objectsNode;
     }
 
+    private SelectionManager selectionManager;
+
     /** Connect the selection manager to the camera controller for mouse picking. */
     public void setSelectionManager(SelectionManager selectionManager) {
+        this.selectionManager = selectionManager;
         enqueue(() -> {
             if (cameraController != null) {
                 cameraController.setSelectionManager(selectionManager, objectsNode);
@@ -578,32 +585,35 @@ public class SceneManager extends SimpleApplication {
         });
     }
 
-    private static final ColorRGBA HIGHLIGHT_TINT = new ColorRGBA(0.3f, 0.6f, 1.0f, 1f);
+    private static final ColorRGBA OUTLINE_COLOR = new ColorRGBA(0.2f, 0.6f, 1.0f, 1f);
+    private static final float OUTLINE_SCALE = 1.04f;
+    private static final String OUTLINE_PREFIX = "outline_";
 
-    /** Highlight an object by tinting it. Call from render thread. */
+    /** Add or remove a silhouette outline on an object using the inverted hull technique. */
     public void setHighlight(String name, boolean highlighted) {
         enqueue(() -> {
+            Node wrapper = objectNodes.get(name);
             Geometry geom = geometries.get(name);
-            if (geom == null) return;
-            Material mat = geom.getMaterial();
+            if (wrapper == null || geom == null) return;
+
+            // Remove existing outline if any
+            Spatial existing = wrapper.getChild(OUTLINE_PREFIX + name);
+            if (existing != null) {
+                existing.removeFromParent();
+            }
+
             if (highlighted) {
-                // Store original colors as user data for restoration
-                ColorRGBA origDiffuse = (ColorRGBA) mat.getParam("Diffuse").getValue();
-                ColorRGBA origAmbient = (ColorRGBA) mat.getParam("Ambient").getValue();
-                geom.setUserData("origDiffuse", new float[]{origDiffuse.r, origDiffuse.g, origDiffuse.b, origDiffuse.a});
-                geom.setUserData("origAmbient", new float[]{origAmbient.r, origAmbient.g, origAmbient.b, origAmbient.a});
-                // Tint toward highlight color
-                mat.setColor("Diffuse", origDiffuse.clone().interpolateLocal(HIGHLIGHT_TINT, 0.4f));
-                mat.setColor("Ambient", origAmbient.clone().interpolateLocal(HIGHLIGHT_TINT, 0.4f));
-                // Add wireframe overlay
-                mat.getAdditionalRenderState().setWireframe(true);
-            } else {
-                // Restore original colors
-                float[] od = (float[]) geom.getUserData("origDiffuse");
-                float[] oa = (float[]) geom.getUserData("origAmbient");
-                if (od != null) mat.setColor("Diffuse", new ColorRGBA(od[0], od[1], od[2], od[3]));
-                if (oa != null) mat.setColor("Ambient", new ColorRGBA(oa[0], oa[1], oa[2], oa[3]));
-                mat.getAdditionalRenderState().setWireframe(false);
+                // Inverted hull: a slightly scaled-up solid copy with front-face culling.
+                // Only the back faces are rendered, creating a clean silhouette outline
+                // around the visible edges without showing internal triangle edges.
+                Geometry outline = geom.clone(false);
+                outline.setName(OUTLINE_PREFIX + name);
+                Material hullMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+                hullMat.setColor("Color", OUTLINE_COLOR);
+                hullMat.getAdditionalRenderState().setFaceCullMode(RenderState.FaceCullMode.Front);
+                outline.setMaterial(hullMat);
+                outline.setLocalScale(OUTLINE_SCALE);
+                wrapper.attachChild(outline);
             }
         });
     }
