@@ -1,8 +1,8 @@
-# Jigger
+# CADette
 
 A 3D command-shell CAD tool for designing cabinets, woodworking jigs, and other shop projects. Built on [jMonkeyEngine](https://jmonkeyengine.org/).
 
-Jigger works with real materials — plywood, MDF, hardwood, metal — each with actual thickness. You design assemblies of cut pieces connected by joinery, then generate cut lists and bills of materials.
+CADette works with real materials — plywood, MDF, hardwood, metal — each with actual thickness. You design assemblies of cut pieces connected by joinery, then generate cut lists and bills of materials.
 
 ## Requirements
 
@@ -59,7 +59,7 @@ For dado and rabbet, depth defaults to half the receiving material's thickness i
 
 ### Templates
 
-Jigger ships with 5 built-in templates: `base-cabinet`, `wall-cabinet`, `drawer-box`, `shelf-unit`, and `crosscut-sled`. Instantiate them with parameters:
+CADette ships with 5 built-in templates: `base-cabinet`, `wall-cabinet`, `drawer-box`, `shelf-unit`, and `crosscut-sled`. Instantiate them with parameters:
 
 ```
 create base-cabinet "K1" width 600 height 900 depth 400
@@ -186,8 +186,8 @@ set layout tabs|split   — switch between tabbed and split-pane view
 export cutsheet pdf|png|jpg [file]  — export cut sheets
 display names           — show name labels on all objects
 hide names
-run                     — run a .jigs script (opens file chooser)
-run "path/to/file.jigs"
+run                     — run a .cds script (opens file chooser)
+run "path/to/file.cds"
 undo / redo
 help
 exit
@@ -206,13 +206,13 @@ exit
 
 ### Scripts
 
-Save commands in `.jigs` files and run them with the `run` command. A startup script at `~/.jigger/startup.jigs` auto-runs on launch.
+Save commands in `.cds` files and run them with the `run` command. A startup script at `~/.cadette/startup.cds` auto-runs on launch.
 
 Script execution is atomic for undo — a single undo reverts the entire script.
 
 ## Materials
 
-Jigger includes 24 pre-loaded materials covering common woodworking sheet goods, hardwoods, and metals in both imperial and metric naming:
+CADette includes 24 pre-loaded materials covering common woodworking sheet goods, hardwoods, and metals in both imperial and metric naming:
 
 - Plywood (1/4" through 3/4", 6mm through 18mm)
 - MDF, hardboard, melamine
@@ -224,8 +224,8 @@ Materials automatically switch when you change units (e.g., `plywood-3/4` in inc
 ## Architecture
 
 ```
-src/main/java/com/jigger/
-  JiggerApp.java              — Application entry point (jME3 canvas in Swing)
+src/main/java/app/cadette/
+  CADetteApp.java              — Application entry point (jME3 canvas in Swing)
   SceneManager.java           — 3D scene, object tracking, JointRegistry
   CameraController.java       — Camera controls for workshop-scale viewing
   CommandPanel.java           — Swing command input panel
@@ -235,7 +235,7 @@ src/main/java/com/jigger/
   UnitSystem.java             — Unit conversion (mm, cm, m, inches, feet)
   ViewLayoutMode.java         — Tabbed vs split-pane layout enum
   command/
-    JiggerCommand.g4          — ANTLR4 grammar for command parsing
+    CADetteCommand.g4          — ANTLR4 grammar for command parsing
     CommandExecutor.java      — Command dispatch (pre-parse intercepts + ANTLR)
     CommandVisitor.java       — ANTLR visitor implementing all commands
     *Action.java              — Undoable actions (move, rotate, delete, join, etc.)
@@ -267,7 +267,7 @@ The joinery system is designed so that adding a new joint type (e.g., mortise & 
 
 ### Step 1: Add the Joint Type Enum Value
 
-In `src/main/java/com/jigger/model/JointType.java`, add a new enum constant:
+In `src/main/java/app/cadette/model/JointType.java`, add a new enum constant:
 
 ```java
 MORTISE_TENON("Mortise & Tenon", true),
@@ -279,7 +279,7 @@ The two parameters are:
 
 ### Step 2: Update the ANTLR Grammar
 
-In `src/main/antlr4/com/jigger/command/JiggerCommand.g4`:
+In `src/main/antlr4/app/cadette/command/CADetteCommand.g4`:
 
 1. Add a lexer token:
    ```antlr
@@ -325,7 +325,7 @@ If your joint uses fasteners, update `generateFasteners()` as well.
 ### Step 5: Update Help and Tests
 
 - Update `helpText()` in `CommandVisitor.java` to list the new type
-- Add test cases in `src/test/java/com/jigger/JoineryTest.java`
+- Add test cases in `src/test/java/app/cadette/JoineryTest.java`
 
 ### Step 6 (Optional): Add to Templates
 
@@ -347,15 +347,16 @@ If built-in templates should use the new joint type, update their definitions in
 
 ### Backlog
 
-- Persistent command history across sessions
 - Drag-to-move for selected parts and assemblies
 - Optional 3D background views (floor plane for cabinets, workbench surface, etc.)
+- Script file format shebang identifier
 - Shelf count logic for the shelf-unit template
 - Additional joint types: dovetails, biscuits, dowels, splines
 - Wood grain textures and shaders
 - Save/load projects
 - Export cut lists to CSV
 - Collision detection
+- Native app packaging (jpackage)
 
 ## License
 

@@ -1,0 +1,52 @@
+/*
+ * Copyright 2026 Bob Hablutzel
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Source: https://github.com/bobhablutzel/cadette
+ */
+
+package app.cadette.command;
+
+import app.cadette.SceneManager;
+import com.jme3.math.Vector3f;
+
+public class MoveAction implements UndoableAction {
+
+    private final SceneManager scene;
+    private final String name;
+    private final Vector3f oldPosition;
+    private final Vector3f newPosition;
+
+    public MoveAction(SceneManager scene, String name, Vector3f oldPosition, Vector3f newPosition) {
+        this.scene = scene;
+        this.name = name;
+        this.oldPosition = oldPosition;
+        this.newPosition = newPosition;
+    }
+
+    @Override
+    public void undo() {
+        scene.moveObject(name, oldPosition);
+    }
+
+    @Override
+    public void redo() {
+        scene.moveObject(name, newPosition);
+    }
+
+    @Override
+    public String description() {
+        return "move \"" + name + "\"";
+    }
+}
