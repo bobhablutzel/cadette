@@ -1141,7 +1141,7 @@ public class CommandVisitor extends CadetteCommandBaseVisitor<String> {
                     t.isBuiltIn() ? "  (built-in)" : ""));
         }
         sb.append("\nUsage: create <template> \"name\" param1 value1 ...");
-        sb.append("\n       Aliases work: create base-cabinet K w 600 h 900 d 400");
+        sb.append("\n       Aliases work: create base_cabinet K w 600 h 900 d 400");
         return sb.toString().stripTrailing();
     }
 
@@ -1570,7 +1570,7 @@ public class CommandVisitor extends CadetteCommandBaseVisitor<String> {
                 $thickness is implicit (from default material).
 
                 Examples:
-                  create base-cabinet "K1" width 600 height 900 depth 400
+                  create base_cabinet "K1" width 600 height 900 depth 400
                   create part "left side" material "plywood-3/4" size 600,900 at 0,0,0 grain vertical
                   create part "back panel" material "hardboard-5.5mm" size 800,900
                   create part rail material "aluminum-1/8" size 600,19

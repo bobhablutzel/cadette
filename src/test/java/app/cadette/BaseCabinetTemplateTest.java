@@ -25,10 +25,10 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Headless test for the base-cabinet template.
+ * Headless test for the base_cabinet template.
  * Creates a cabinet and verifies each part's world-space bounding box.
  *
- * Expected layout for "create base-cabinet BCT width 500 height 600 depth 400"
+ * Expected layout for "create base_cabinet BCT width 500 height 600 depth 400"
  * with default 18mm plywood and 5.5mm hardboard:
  *
  * Looking from the front:
@@ -46,7 +46,7 @@ class BaseCabinetTemplateTest extends HeadlessTestBase {
 
     @Test
     void testBaseCabinetGeometry() {
-        String result = exec("create base-cabinet BCT width 500 height 600 depth 400");
+        String result = exec("create base_cabinet BCT width 500 height 600 depth 400");
         System.out.println(result);
 
         // Debug dump all parts
@@ -74,7 +74,7 @@ class BaseCabinetTemplateTest extends HeadlessTestBase {
 
     @Test
     void testPartsDoNotOverlapSides() {
-        exec("create base-cabinet BCT width 500 height 600 depth 400");
+        exec("create base_cabinet BCT width 500 height 600 depth 400");
 
         Vector3f[] left = bounds("BCT/left-side");
         Vector3f[] right = bounds("BCT/right-side");

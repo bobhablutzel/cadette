@@ -46,7 +46,7 @@ class SheetLayoutTest extends HeadlessTestBase {
 
     @Test
     void testShowLayoutBaseCabinet() {
-        exec("create base-cabinet K w 500 h 600 d 400");
+        exec("create base_cabinet K w 500 h 600 d 400");
         String layout = exec("show layout");
         System.out.println(layout);
 
@@ -120,7 +120,7 @@ class SheetLayoutTest extends HeadlessTestBase {
 
     @Test
     void testBomShowsRealSheetCount() {
-        exec("create base-cabinet K w 500 h 600 d 400");
+        exec("create base_cabinet K w 500 h 600 d 400");
         String bom = exec("show bom");
         System.out.println(bom);
 
@@ -134,7 +134,7 @@ class SheetLayoutTest extends HeadlessTestBase {
     @Test
     void testLayoutUnitsConversion() {
         exec("set units inches");
-        exec("create base-cabinet K w 24 h 30 d 18");
+        exec("create base_cabinet K w 24 h 30 d 18");
         String layout = exec("show layout");
         System.out.println(layout);
 

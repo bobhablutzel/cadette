@@ -37,7 +37,7 @@ class BaseCabinetUnitsTest extends HeadlessTestBase {
     void testStretcherInCm_deepCabinet() {
         exec("set units cm");
         // 30cm deep cabinet — stretcher should cap at 10cm (= 100mm)
-        exec("create base-cabinet K width 50 height 60 depth 30");
+        exec("create base_cabinet K width 50 height 60 depth 30");
 
         System.out.println("\n=== Base Cabinet (cm, depth 30) ===");
         debugPart("K/top-stretcher");
@@ -54,7 +54,7 @@ class BaseCabinetUnitsTest extends HeadlessTestBase {
     void testStretcherInCm_shallowCabinet() {
         exec("set units cm");
         // 8cm deep cabinet — stretcher should use full depth (80mm < 100mm)
-        exec("create base-cabinet K width 50 height 60 depth 8");
+        exec("create base_cabinet K width 50 height 60 depth 8");
 
         System.out.println("\n=== Base Cabinet (cm, depth 8) ===");
         debugPart("K/top-stretcher");
@@ -70,7 +70,7 @@ class BaseCabinetUnitsTest extends HeadlessTestBase {
     void testStretcherInInches() {
         exec("set units inches");
         // 16" deep cabinet — stretcher should cap at ~3.94" (100mm)
-        exec("create base-cabinet K width 20 height 24 depth 16");
+        exec("create base_cabinet K width 20 height 24 depth 16");
 
         System.out.println("\n=== Base Cabinet (inches, depth 16) ===");
         debugPart("K/top-stretcher");

@@ -36,8 +36,8 @@ class RelativePositionTest extends HeadlessTestBase {
 
     @Test
     void moveToRightOfAssembly() {
-        exec("create base-cabinet \"a\" width 600 height 900 depth 400");
-        exec("create base-cabinet \"b\" width 600 height 900 depth 400");
+        exec("create base_cabinet \"a\" width 600 height 900 depth 400");
+        exec("create base_cabinet \"b\" width 600 height 900 depth 400");
 
         String result = exec("move b to right of a");
         assertFalse(result.contains("error"), "Should succeed: " + result);
@@ -50,8 +50,8 @@ class RelativePositionTest extends HeadlessTestBase {
 
     @Test
     void moveToLeftOfAssembly() {
-        exec("create base-cabinet \"a\" width 600 height 900 depth 400");
-        exec("create base-cabinet \"b\" width 600 height 900 depth 400");
+        exec("create base_cabinet \"a\" width 600 height 900 depth 400");
+        exec("create base_cabinet \"b\" width 600 height 900 depth 400");
 
         exec("move b to left of a");
 
@@ -62,8 +62,8 @@ class RelativePositionTest extends HeadlessTestBase {
 
     @Test
     void moveWithGap() {
-        exec("create base-cabinet \"a\" width 600 height 900 depth 400");
-        exec("create base-cabinet \"b\" width 600 height 900 depth 400");
+        exec("create base_cabinet \"a\" width 600 height 900 depth 400");
+        exec("create base_cabinet \"b\" width 600 height 900 depth 400");
 
         exec("move b to right of a gap 50");
 
@@ -74,8 +74,8 @@ class RelativePositionTest extends HeadlessTestBase {
 
     @Test
     void createWithRelativePosition() {
-        exec("create base-cabinet \"a\" width 600 height 900 depth 400");
-        String result = exec("create base-cabinet \"b\" width 600 height 900 depth 400 to right of a");
+        exec("create base_cabinet \"a\" width 600 height 900 depth 400");
+        String result = exec("create base_cabinet \"b\" width 600 height 900 depth 400 to right of a");
         assertFalse(result.contains("error"), "Should succeed: " + result);
 
         var aBBox = getAssemblyAABB("a");
@@ -85,8 +85,8 @@ class RelativePositionTest extends HeadlessTestBase {
 
     @Test
     void createWithRelativePositionAndGap() {
-        exec("create base-cabinet \"a\" width 600 height 900 depth 400");
-        exec("create base-cabinet \"b\" width 600 height 900 depth 400 to right of a gap 25");
+        exec("create base_cabinet \"a\" width 600 height 900 depth 400");
+        exec("create base_cabinet \"b\" width 600 height 900 depth 400 to right of a gap 25");
 
         var aBBox = getAssemblyAABB("a");
         var bBBox = getAssemblyAABB("b");
@@ -95,8 +95,8 @@ class RelativePositionTest extends HeadlessTestBase {
 
     @Test
     void moveAboveAssembly() {
-        exec("create base-cabinet \"a\" width 600 height 900 depth 400");
-        exec("create wall-cabinet \"wc\" width 600 height 400 depth 300");
+        exec("create base_cabinet \"a\" width 600 height 900 depth 400");
+        exec("create wall_cabinet \"wc\" width 600 height 400 depth 300");
 
         String result = exec("move wc to above a");
         assertFalse(result.contains("error"), "Should succeed: " + result);
@@ -108,9 +108,9 @@ class RelativePositionTest extends HeadlessTestBase {
 
     @Test
     void alignFrontOfMultipleAssemblies() {
-        exec("create base-cabinet \"a\" width 600 height 900 depth 400");
-        exec("create base-cabinet \"b\" width 500 height 900 depth 300");
-        exec("create base-cabinet \"c\" width 400 height 900 depth 350");
+        exec("create base_cabinet \"a\" width 600 height 900 depth 400");
+        exec("create base_cabinet \"b\" width 500 height 900 depth 300");
+        exec("create base_cabinet \"c\" width 400 height 900 depth 350");
 
         exec("move b to right of a");
         exec("move c to right of b");
@@ -127,8 +127,8 @@ class RelativePositionTest extends HeadlessTestBase {
 
     @Test
     void alignBackOfAssembly() {
-        exec("create base-cabinet \"a\" width 600 height 900 depth 400");
-        exec("create base-cabinet \"b\" width 500 height 900 depth 300");
+        exec("create base_cabinet \"a\" width 600 height 900 depth 400");
+        exec("create base_cabinet \"b\" width 500 height 900 depth 300");
         exec("move b to right of a");
 
         exec("align back of b with a");
@@ -140,8 +140,8 @@ class RelativePositionTest extends HeadlessTestBase {
 
     @Test
     void alignTopOfAssembly() {
-        exec("create base-cabinet \"a\" width 600 height 900 depth 400");
-        exec("create base-cabinet \"b\" width 600 height 700 depth 400");
+        exec("create base_cabinet \"a\" width 600 height 900 depth 400");
+        exec("create base_cabinet \"b\" width 600 height 700 depth 400");
         exec("move b to right of a");
 
         exec("align top of b with a");
@@ -153,8 +153,8 @@ class RelativePositionTest extends HeadlessTestBase {
 
     @Test
     void moveRelativeUndoable() {
-        exec("create base-cabinet \"a\" width 600 height 900 depth 400");
-        exec("create base-cabinet \"b\" width 600 height 900 depth 400");
+        exec("create base_cabinet \"a\" width 600 height 900 depth 400");
+        exec("create base_cabinet \"b\" width 600 height 900 depth 400");
 
         var origBBox = getAssemblyAABB("b");
         exec("move b to right of a");

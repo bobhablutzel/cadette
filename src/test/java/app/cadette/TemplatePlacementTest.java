@@ -32,7 +32,7 @@ class TemplatePlacementTest extends HeadlessTestBase {
 
     @Test
     void testPlacementAtOrigin() {
-        exec("create base-cabinet K w 500 h 600 d 400");
+        exec("create base_cabinet K w 500 h 600 d 400");
 
         System.out.println("\n=== At origin ===");
         debugPart("K/left-side");
@@ -45,7 +45,7 @@ class TemplatePlacementTest extends HeadlessTestBase {
 
     @Test
     void testPlacementOffset() {
-        exec("create base-cabinet K w 500 h 600 d 400 at 1000,0,0");
+        exec("create base_cabinet K w 500 h 600 d 400 at 1000,0,0");
 
         System.out.println("\n=== At 1000,0,0 ===");
         debugPart("K/left-side");
@@ -65,7 +65,7 @@ class TemplatePlacementTest extends HeadlessTestBase {
 
     @Test
     void testPlacementWithAtAlias() {
-        exec("create base-cabinet K w 500 h 600 d 400 @ 500,200,0");
+        exec("create base_cabinet K w 500 h 600 d 400 @ 500,200,0");
 
         var left = bounds("K/left-side");
         assertNotNull(left);
@@ -76,7 +76,7 @@ class TemplatePlacementTest extends HeadlessTestBase {
     @Test
     void testPlacementInCm() {
         exec("set units cm");
-        exec("create base-cabinet K w 50 h 60 d 40 at 100,0,0");
+        exec("create base_cabinet K w 50 h 60 d 40 at 100,0,0");
 
         System.out.println("\n=== At 100cm ===");
         debugPart("K/left-side");
@@ -89,8 +89,8 @@ class TemplatePlacementTest extends HeadlessTestBase {
 
     @Test
     void testTwoCabinetsSideBySide() {
-        exec("create base-cabinet K1 w 500 h 600 d 400");
-        exec("create base-cabinet K2 w 500 h 600 d 400 at 500,0,0");
+        exec("create base_cabinet K1 w 500 h 600 d 400");
+        exec("create base_cabinet K2 w 500 h 600 d 400 at 500,0,0");
 
         var k1Right = bounds("K1/right-side");
         var k2Left = bounds("K2/left-side");

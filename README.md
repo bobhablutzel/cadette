@@ -59,11 +59,11 @@ For dado and rabbet, depth defaults to half the receiving material's thickness i
 
 ### Templates
 
-CADette ships with 5 built-in templates: `base-cabinet`, `wall-cabinet`, `drawer-box`, `shelf-unit`, and `crosscut-sled`. Instantiate them with parameters:
+CADette ships with 5 built-in templates: `base_cabinet`, `wall_cabinet`, `drawer_box`, `shelf_unit`, and `crosscut_sled`. Instantiate them with parameters:
 
 ```
-create base-cabinet "K1" width 600 height 900 depth 400
-create drawer-box "D1" width 500 height 100 depth 400
+create base_cabinet "K1" width 600 height 900 depth 400
+create drawer_box "D1" width 500 height 100 depth 400
 ```
 
 Define your own templates with parametric variables and arithmetic:
@@ -86,7 +86,7 @@ Use `show template <name>` to view any built-in template as a copiable `define` 
 Template instances are assemblies — you can operate on them as a unit by name:
 
 ```
-create base-cabinet "b" width 600 height 900 depth 400
+create base_cabinet "b" width 600 height 900 depth 400
 move b to 100,0,0           — moves all parts as a unit
 rotate b 0,90,0             — rotates entire assembly around its origin
 delete b                    — deletes all parts in the assembly
@@ -108,9 +108,9 @@ The `list` command groups parts by assembly.
 Place assemblies and parts relative to each other:
 
 ```
-create base-cabinet "a" width 600 height 900 depth 400
-create base-cabinet "b" width 600 height 900 depth 400 to right of a
-create wall-cabinet "wc" width 600 height 400 depth 300 to above a gap 50
+create base_cabinet "a" width 600 height 900 depth 400
+create base_cabinet "b" width 600 height 900 depth 400 to right of a
+create wall_cabinet "wc" width 600 height 400 depth 300 to above a gap 50
 move b to left of a
 move b to right of a gap 25     — 25mm gap between them
 ```
@@ -350,7 +350,7 @@ If built-in templates should use the new joint type, update their definitions in
 - Drag-to-move for selected parts and assemblies
 - Optional 3D background views (floor plane for cabinets, workbench surface, etc.)
 - Script file format shebang identifier
-- Shelf count logic for the shelf-unit template
+- Shelf count logic for the shelf_unit template
 - Additional joint types: dovetails, biscuits, dowels, splines
 - Wood grain textures and shaders
 - Save/load projects

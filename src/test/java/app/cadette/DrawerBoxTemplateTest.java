@@ -31,7 +31,7 @@ class DrawerBoxTemplateTest extends HeadlessTestBase {
 
     @Test
     void testDrawerBoxGeometry() {
-        String result = exec("create drawer-box D width 500 height 200 depth 400");
+        String result = exec("create drawer_box D width 500 height 200 depth 400");
         System.out.println(result);
 
         System.out.println("\n=== Drawer Box Parts ===");

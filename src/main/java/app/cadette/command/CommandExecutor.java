@@ -220,11 +220,7 @@ public class CommandExecutor {
             }
 
             // -- Normal ANTLR parsing --
-            // Bare hyphenated template names (e.g. "create base-cabinet K ...") can't be
-            // tokenized as ID, so quote the second word when it matches a registered template.
-            String normalized = quoteTemplateNameIfNeeded(trimmed);
-
-            CharStream chars = CharStreams.fromString(normalized);
+            CharStream chars = CharStreams.fromString(trimmed);
             CadetteCommandLexer lexer = new CadetteCommandLexer(chars);
             lexer.removeErrorListeners();
 
@@ -308,30 +304,6 @@ public class CommandExecutor {
 
     /** Relative placement info for a template instantiation. */
     record RelativePlacement(String direction, String referenceName, float gapUnits) {}
-
-    /**
-     * Quote a bare hyphenated template name so ANTLR can tokenize it. ANTLR's ID
-     * rule can't accept hyphens without breaking `-N` number parsing elsewhere, so
-     * we detect template names here and wrap them in quotes before parsing.
-     */
-    private String quoteTemplateNameIfNeeded(String input) {
-        String lower = input.toLowerCase();
-        int createLen;
-        if (lower.startsWith("create ")) createLen = 7;
-        else if (lower.startsWith("cr ")) createLen = 3;
-        else return input;
-
-        int start = createLen;
-        while (start < input.length() && Character.isWhitespace(input.charAt(start))) start++;
-        if (start >= input.length() || input.charAt(start) == '"') return input;
-
-        int end = start;
-        while (end < input.length() && !Character.isWhitespace(input.charAt(end))) end++;
-        String candidate = input.substring(start, end);
-        if (TemplateRegistry.instance().get(candidate) == null) return input;
-
-        return input.substring(0, start) + "\"" + candidate + "\"" + input.substring(end);
-    }
 
     /**
      * Instantiate a template. Called by the visitor after ANTLR parses the command.

@@ -35,7 +35,7 @@ class AssemblyOperationsTest extends HeadlessTestBase {
     }
 
     private void createTestCabinet() {
-        exec("create base-cabinet \"b\" width 600 height 900 depth 400");
+        exec("create base_cabinet \"b\" width 600 height 900 depth 400");
     }
 
     @Test
@@ -139,7 +139,7 @@ class AssemblyOperationsTest extends HeadlessTestBase {
 
         String info = exec("show info b");
         assertTrue(info.contains("Assembly:"), "Should show assembly header");
-        assertTrue(info.contains("base-cabinet"), "Should show template name");
+        assertTrue(info.contains("base_cabinet"), "Should show template name");
         assertTrue(info.contains("b/left-side"), "Should list parts");
     }
 
@@ -151,7 +151,7 @@ class AssemblyOperationsTest extends HeadlessTestBase {
 
         String list = exec("list");
         assertTrue(list.contains("assembly"), "Should show assembly grouping");
-        assertTrue(list.contains("base-cabinet"), "Should show template name");
+        assertTrue(list.contains("base_cabinet"), "Should show template name");
         assertTrue(list.contains("Standalone"), "Should have standalone section");
         assertTrue(list.contains("standalone"), "Should list standalone part");
     }

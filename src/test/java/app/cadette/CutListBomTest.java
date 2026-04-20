@@ -31,7 +31,7 @@ class CutListBomTest extends HeadlessTestBase {
 
     @Test
     void testCutListGroupedByMaterial() {
-        exec("create base-cabinet K w 500 h 600 d 400");
+        exec("create base_cabinet K w 500 h 600 d 400");
         exec("join \"K/left-side\" to \"K/bottom\" with dado depth 9");
         exec("join \"K/right-side\" to \"K/bottom\" with dado depth 9");
 
@@ -59,7 +59,7 @@ class CutListBomTest extends HeadlessTestBase {
 
     @Test
     void testBomWithSheetEstimate() {
-        exec("create base-cabinet K w 500 h 600 d 400");
+        exec("create base_cabinet K w 500 h 600 d 400");
 
         String bom = exec("show bom");
         System.out.println(bom);
@@ -75,7 +75,7 @@ class CutListBomTest extends HeadlessTestBase {
 
     @Test
     void testBomWithFasteners() {
-        exec("create base-cabinet K w 500 h 600 d 400");
+        exec("create base_cabinet K w 500 h 600 d 400");
         exec("join \"K/left-side\" to \"K/top-stretcher\" with pocket screws 3 spacing 150");
         exec("join \"K/right-side\" to \"K/top-stretcher\" with pocket screws 3 spacing 150");
 
@@ -90,7 +90,7 @@ class CutListBomTest extends HeadlessTestBase {
     void testCutListInDifferentUnits() {
         exec("set units inches");
         // Create a cabinet in inches
-        exec("create base-cabinet K w 24 h 30 d 18");
+        exec("create base_cabinet K w 24 h 30 d 18");
 
         String cutlist = exec("show cutlist");
         System.out.println(cutlist);
@@ -103,7 +103,7 @@ class CutListBomTest extends HeadlessTestBase {
 
     @Test
     void testCutListWithJoineryOperations() {
-        exec("create base-cabinet K w 500 h 600 d 400");
+        exec("create base_cabinet K w 500 h 600 d 400");
         exec("join \"K/left-side\" to \"K/bottom\" with dado depth 9");
         exec("join \"K/left-side\" to \"K/top-stretcher\" with pocket screws 2");
 

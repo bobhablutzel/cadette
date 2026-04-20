@@ -35,7 +35,7 @@ class JoineryTest extends HeadlessTestBase {
 
     @Test
     void testDadoJoint() {
-        exec("create base-cabinet K w 500 h 600 d 400");
+        exec("create base_cabinet K w 500 h 600 d 400");
         String result = exec("join \"K/left-side\" to \"K/bottom\" with dado depth 9");
         System.out.println(result);
 
@@ -55,7 +55,7 @@ class JoineryTest extends HeadlessTestBase {
 
     @Test
     void testPocketScrewJoint() {
-        exec("create base-cabinet K w 500 h 600 d 400");
+        exec("create base_cabinet K w 500 h 600 d 400");
         String result = exec("join \"K/left-side\" to \"K/top-stretcher\" with pocket screws 3 spacing 150");
         System.out.println(result);
 
@@ -72,7 +72,7 @@ class JoineryTest extends HeadlessTestBase {
 
     @Test
     void testButtJoint() {
-        exec("create base-cabinet K w 500 h 600 d 400");
+        exec("create base_cabinet K w 500 h 600 d 400");
         String result = exec("join \"K/left-side\" to \"K/back\" with butt");
         System.out.println(result);
         assertTrue(result.contains("Butt joint"));
@@ -80,7 +80,7 @@ class JoineryTest extends HeadlessTestBase {
 
     @Test
     void testShowJoints() {
-        exec("create base-cabinet K w 500 h 600 d 400");
+        exec("create base_cabinet K w 500 h 600 d 400");
         exec("join \"K/left-side\" to \"K/bottom\" with dado depth 9");
         exec("join \"K/right-side\" to \"K/bottom\" with dado depth 9");
         exec("join \"K/left-side\" to \"K/top-stretcher\" with pocket screws 2");
@@ -114,7 +114,7 @@ class JoineryTest extends HeadlessTestBase {
 
     @Test
     void testShowInfoWithJoints() {
-        exec("create base-cabinet K w 500 h 600 d 400");
+        exec("create base_cabinet K w 500 h 600 d 400");
         exec("join \"K/left-side\" to \"K/bottom\" with dado depth 9");
 
         String info = exec("show info \"K/left-side\"");
@@ -126,7 +126,7 @@ class JoineryTest extends HeadlessTestBase {
 
     @Test
     void testDadoDefaultDepth() {
-        exec("create base-cabinet K w 500 h 600 d 400");
+        exec("create base_cabinet K w 500 h 600 d 400");
         // No depth specified — should default to half the receiving material thickness
         String result = exec("join \"K/left-side\" to \"K/bottom\" with dado");
         System.out.println(result);
@@ -139,7 +139,7 @@ class JoineryTest extends HeadlessTestBase {
 
     @Test
     void testDadoDepthCapped() {
-        exec("create base-cabinet K w 500 h 600 d 400");
+        exec("create base_cabinet K w 500 h 600 d 400");
         // Depth exceeds material thickness (18mm) — should be capped
         String result = exec("join \"K/left-side\" to \"K/bottom\" with dado depth 25");
         System.out.println(result);
@@ -153,7 +153,7 @@ class JoineryTest extends HeadlessTestBase {
 
     @Test
     void testThinMaterialWarning() {
-        exec("create base-cabinet K w 500 h 600 d 400");
+        exec("create base_cabinet K w 500 h 600 d 400");
         // Back is 5.5mm hardboard — too thin to receive a dado
         String result = exec("join \"K/back\" to \"K/bottom\" with dado");
         System.out.println(result);
@@ -165,7 +165,7 @@ class JoineryTest extends HeadlessTestBase {
     @Test
     void testJoinInTemplate() {
         // Joints should work inside template definitions
-        exec("define \"joined-box\" params width, height, depth");
+        exec("define \"joined_box\" params width, height, depth");
         exec("create part \"left\" size $depth, $height at 0,0,0 grain vertical");
         exec("rotate \"left\" 0,90,0");
         exec("create part \"bottom\" size $width, $depth at 0,0,0");
@@ -173,7 +173,7 @@ class JoineryTest extends HeadlessTestBase {
         exec("join \"left\" to \"bottom\" with dado depth 9");
         exec("end define");
 
-        String result = exec("create joined-box JB w 500 h 300 d 400");
+        String result = exec("create joined_box JB w 500 h 300 d 400");
         System.out.println(result);
 
         // Joints should exist with prefixed names

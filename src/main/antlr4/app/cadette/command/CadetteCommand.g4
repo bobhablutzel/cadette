@@ -107,7 +107,7 @@ moveCommand
     ;
 
 relativePosition
-    : TO direction OF? objectName (GAP NUMBER)?
+    : TO? direction OF? objectName (GAP NUMBER)?
     ;
 
 direction
@@ -150,7 +150,7 @@ rotation
 
 // Object and material names must also accept keyword tokens that happen to have
 // single-letter aliases (e.g. 'D' lexes as DEPTH), since users naturally pick
-// short letters for instance names like "create base-cabinet D ...".
+// short letters for instance names like "create base_cabinet D ...".
 objectName
     : STRING
     | nameLike

@@ -20,11 +20,15 @@ package app.cadette.model;
 
 import java.util.*;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Registry of template definitions. Pre-loaded with common woodworking templates.
  */
 public class TemplateRegistry {
+
+    /** Template names: Java-identifier-like (start with a letter, then letters/digits/underscores). */
+    private static final Pattern VALID_NAME = Pattern.compile("[a-zA-Z][a-zA-Z0-9_]*");
 
     private static final TemplateRegistry INSTANCE = new TemplateRegistry();
 
@@ -47,7 +51,13 @@ public class TemplateRegistry {
     }
 
     public void register(Template template) {
-        templates.put(template.getName().toLowerCase(), template);
+        String name = template.getName();
+        if (!VALID_NAME.matcher(name).matches()) {
+            throw new IllegalArgumentException(
+                    "Invalid template name '" + name + "': must start with a letter and "
+                    + "contain only letters, digits, and underscores.");
+        }
+        templates.put(name.toLowerCase(), template);
     }
 
     private void loadBuiltins() {
@@ -63,7 +73,7 @@ public class TemplateRegistry {
         Map<String, String> whdAliases = Map.of("w", "width", "h", "height", "d", "depth");
 
         // -- Base Cabinet --
-        register(new Template("base-cabinet",
+        register(new Template("base_cabinet",
                 List.of("width", "height", "depth"), whdAliases,
                 List.of(
                     "# Sides",
@@ -89,7 +99,7 @@ public class TemplateRegistry {
                 ), true));
 
         // -- Wall Cabinet --
-        register(new Template("wall-cabinet",
+        register(new Template("wall_cabinet",
                 List.of("width", "height", "depth"), whdAliases,
                 List.of(
                     "create part \"left-side\" size $depth, $height at 0, 0, 0 grain vertical",
@@ -111,7 +121,7 @@ public class TemplateRegistry {
                 ), true));
 
         // -- Drawer Box --
-        register(new Template("drawer-box",
+        register(new Template("drawer_box",
                 List.of("width", "height", "depth"), whdAliases,
                 List.of(
                     "create part \"left-side\" size $depth, $height at 0, 0, 0 grain vertical",
@@ -132,7 +142,7 @@ public class TemplateRegistry {
                 ), true));
 
         // -- Shelf Unit --
-        register(new Template("shelf-unit",
+        register(new Template("shelf_unit",
                 List.of("width", "height", "depth", "shelves"),
                 Map.of("w", "width", "h", "height", "d", "depth", "s", "shelves"),
                 List.of(
@@ -155,7 +165,7 @@ public class TemplateRegistry {
                 ), true));
 
         // -- Crosscut Sled --
-        register(new Template("crosscut-sled",
+        register(new Template("crosscut_sled",
                 List.of("width", "length", "fence_height"),
                 Map.of("w", "width", "l", "length", "fh", "fence_height"),
                 List.of(
