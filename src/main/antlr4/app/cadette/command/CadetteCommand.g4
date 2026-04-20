@@ -18,10 +18,22 @@
 
 grammar CadetteCommand;
 
+options {
+    caseInsensitive = true;
+}
+
 // Parser rules
+
+// Top-level entry: a single input may be empty (e.g. a pure-comment line, since
+// LINE_COMMENT is skipped at lex time) or a single command.
+input
+    : command? EOF
+    ;
+
 command
     : createCommand
     | createPartCommand
+    | createTemplateCommand
     | deleteCommand
     | moveCommand
     | alignCommand
@@ -38,14 +50,51 @@ command
     | redoCommand
     | helpCommand
     | exitCommand
+    | defineCommand
+    | statsCommand
     ;
 
 createCommand
-    : CREATE shape objectName (AT position)? sizeSpec? (COLOR color)?
+    : CREATE shape objectName createArg*
     ;
 
+// Sub-clauses for create: any order. Repeats are accepted by the grammar;
+// the visitor uses last-wins.
+createArg
+    : atPlacement
+    | sizeSpec
+    | COLOR color
+    ;
+
+// SIZE is required semantically but appears as one of several keyword clauses;
+// the visitor validates that a partSize arg is present.
 createPartCommand
-    : CREATE PART objectName (MATERIAL materialName)? SIZE partSize (AT position)? (GRAIN grainReq)?
+    : CREATE PART objectName partArg*
+    ;
+
+partArg
+    : MATERIAL materialName
+    | SIZE partSize
+    | atPlacement
+    | GRAIN grainReq
+    ;
+
+createTemplateCommand
+    : CREATE objectName objectName templateArg*
+    ;
+
+templateArg
+    : paramValuePair
+    | atPlacement
+    | relativePosition
+    ;
+
+atPlacement
+    : AT position
+    ;
+
+paramValuePair
+    : paramName NUMBER
     ;
 
 deleteCommand
@@ -99,14 +148,22 @@ rotation
     : NUMBER COMMA NUMBER COMMA NUMBER
     ;
 
+// Object and material names must also accept keyword tokens that happen to have
+// single-letter aliases (e.g. 'D' lexes as DEPTH), since users naturally pick
+// short letters for instance names like "create base-cabinet D ...".
 objectName
     : STRING
-    | ID
+    | nameLike
     ;
 
 materialName
     : STRING
-    | ID
+    | nameLike
+    ;
+
+nameLike
+    : ID
+    | WIDTH | HEIGHT | DEPTH | SIZE | COLOR | MATERIAL | GRAIN | PART | KERF
     ;
 
 partSize
@@ -120,7 +177,13 @@ grainReq
     ;
 
 joinCommand
-    : JOIN objectName TO objectName WITH jointType (DEPTH NUMBER)? (SCREWS NUMBER)? (SPACING NUMBER)?
+    : JOIN objectName TO objectName WITH jointType joinArg*
+    ;
+
+joinArg
+    : DEPTH NUMBER
+    | SCREWS NUMBER
+    | SPACING NUMBER
     ;
 
 jointType
@@ -197,6 +260,25 @@ helpCommand
 
 exitCommand
     : EXIT
+    ;
+
+defineCommand
+    : DEFINE objectName (PARAMS paramDecl (COMMA paramDecl)*)?
+    ;
+
+statsCommand
+    : STATS
+    ;
+
+paramDecl
+    : paramName (LPAREN paramName RPAREN)?
+    ;
+
+// Parameter names may shadow keyword tokens like 'width' — accept common
+// keyword tokens here so they can be used as identifiers in template params.
+paramName
+    : ID
+    | WIDTH | HEIGHT | DEPTH | SIZE | COLOR | MATERIAL | GRAIN | PART | KERF
     ;
 
 shape
@@ -305,6 +387,11 @@ UNDO       : 'undo' ;
 REDO       : 'redo' ;
 HELP       : 'help' | '?' ;
 EXIT       : 'exit' | 'quit' | 'q' ;
+DEFINE     : 'define' ;
+PARAMS     : 'params' | 'param' ;
+STATS      : 'stats' ;
+LPAREN     : '(' ;
+RPAREN     : ')' ;
 AT         : 'at' | '@' ;
 SIZE       : 'size' | 'sz' ;
 WIDTH      : 'width' | 'w' ;
@@ -329,3 +416,4 @@ HEX_COLOR  : '#' [0-9a-fA-F]+ ;
 STRING     : '"' ~["]* '"' ;
 ID         : [a-zA-Z_] [a-zA-Z0-9_]* ;
 WS         : [ \t\r\n]+ -> skip ;
+LINE_COMMENT : '#' ~[\r\n]* -> skip ;

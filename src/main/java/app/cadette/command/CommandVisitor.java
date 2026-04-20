@@ -58,18 +58,17 @@ public class CommandVisitor extends CadetteCommandBaseVisitor<String> {
         String name = extractName(ctx.objectName());
 
         Vector3f position = Vector3f.ZERO;
-        if (ctx.position() != null) {
-            position = parsePosition(ctx.position());
-        }
-
         Vector3f size = defaultSize();
-        if (ctx.sizeSpec() != null) {
-            size = parseSizeSpec(ctx.sizeSpec());
-        }
-
         ColorRGBA color = ColorRGBA.White;
-        if (ctx.color() != null) {
-            color = parseColor(ctx.color());
+
+        for (var arg : ctx.createArg()) {
+            if (arg.atPlacement() != null) {
+                position = parsePosition(arg.atPlacement().position());
+            } else if (arg.sizeSpec() != null) {
+                size = parseSizeSpec(arg.sizeSpec());
+            } else if (arg.color() != null) {
+                color = parseColor(arg.color());
+            }
         }
 
         String id = scene.createObject(name, shape, position, size, color);
@@ -82,35 +81,74 @@ public class CommandVisitor extends CadetteCommandBaseVisitor<String> {
     }
 
     @Override
+    public String visitCreateTemplateCommand(CadetteCommandParser.CreateTemplateCommandContext ctx) {
+        var names = ctx.objectName();
+        // Template name is a registry lookup, never a scene reference — never prefix it.
+        // Instance name is the new object; extractName applies any outer template's prefix.
+        String templateName = rawObjectName(names.get(0));
+        String instanceName = extractName(names.get(1));
+
+        Vector3f placement = null;
+        CommandExecutor.RelativePlacement relPlacement = null;
+        Map<String, String> rawParams = new LinkedHashMap<>();
+
+        for (var arg : ctx.templateArg()) {
+            if (arg.atPlacement() != null) {
+                var nums = arg.atPlacement().position().NUMBER();
+                placement = new Vector3f(
+                        Float.parseFloat(nums.get(0).getText()),
+                        Float.parseFloat(nums.get(1).getText()),
+                        Float.parseFloat(nums.get(2).getText()));
+            } else if (arg.relativePosition() != null) {
+                var relCtx = arg.relativePosition();
+                String dir = directionText(relCtx.direction());
+                String refName = extractName(relCtx.objectName());
+                float gap = relCtx.GAP() != null
+                        ? Float.parseFloat(relCtx.NUMBER().getText())
+                        : 0;
+                relPlacement = new CommandExecutor.RelativePlacement(dir, refName, gap);
+            } else if (arg.paramValuePair() != null) {
+                var pvp = arg.paramValuePair();
+                rawParams.put(pvp.paramName().getText().toLowerCase(), pvp.NUMBER().getText());
+            }
+        }
+
+        return executor.instantiateTemplate(templateName, instanceName, placement, relPlacement, rawParams);
+    }
+
+    @Override
     public String visitCreatePartCommand(CadetteCommandParser.CreatePartCommandContext ctx) {
         String name = extractName(ctx.objectName());
 
-        app.cadette.model.Material material;
-        if (ctx.materialName() != null) {
-            String materialSlug = extractMaterialName(ctx.materialName());
-            material = MaterialCatalog.instance().get(materialSlug);
-            if (material == null) {
-                return "Unknown material '" + materialSlug + "'.\n"
-                        + "Available materials: use 'show materials' to list.";
+        app.cadette.model.Material material = executor.getDefaultMaterial();
+        CadetteCommandParser.PartSizeContext partSizeCtx = null;
+        Vector3f position = Vector3f.ZERO;
+        GrainRequirement grain = GrainRequirement.ANY;
+
+        for (var arg : ctx.partArg()) {
+            if (arg.materialName() != null) {
+                String materialSlug = extractMaterialName(arg.materialName());
+                material = MaterialCatalog.instance().get(materialSlug);
+                if (material == null) {
+                    return "Unknown material '" + materialSlug + "'.\n"
+                            + "Available materials: use 'show materials' to list.";
+                }
+            } else if (arg.partSize() != null) {
+                partSizeCtx = arg.partSize();
+            } else if (arg.atPlacement() != null) {
+                position = parsePosition(arg.atPlacement().position());
+            } else if (arg.grainReq() != null) {
+                if (arg.grainReq().VERTICAL() != null) grain = GrainRequirement.VERTICAL;
+                else if (arg.grainReq().HORIZONTAL() != null) grain = GrainRequirement.HORIZONTAL;
             }
-        } else {
-            material = executor.getDefaultMaterial();
         }
 
-        var nums = ctx.partSize().NUMBER();
+        if (partSizeCtx == null) {
+            return "Missing 'size' for part '" + name + "'.";
+        }
+        var nums = partSizeCtx.NUMBER();
         float cutWidth = toMm(Float.parseFloat(nums.get(0).getText()));
         float cutHeight = toMm(Float.parseFloat(nums.get(1).getText()));
-
-        Vector3f position = Vector3f.ZERO;
-        if (ctx.position() != null) {
-            position = parsePosition(ctx.position());
-        }
-
-        GrainRequirement grain = GrainRequirement.ANY;
-        if (ctx.grainReq() != null) {
-            if (ctx.grainReq().VERTICAL() != null) grain = GrainRequirement.VERTICAL;
-            else if (ctx.grainReq().HORIZONTAL() != null) grain = GrainRequirement.HORIZONTAL;
-        }
 
         Part part = Part.builder()
                 .name(name)
@@ -123,6 +161,7 @@ public class CommandVisitor extends CadetteCommandBaseVisitor<String> {
 
         scene.createPart(part);
         executor.pushAction(new CreatePartAction(scene, part));
+        executor.setLastCreatedPartName(name);
 
         String abbr = executor.getUnits().getAbbreviation();
         return String.format("Created part '%s' — %s, %.2f x %.2f %s (%.2f %s thick) at (%.2f, %.2f, %.2f)",
@@ -495,6 +534,17 @@ public class CommandVisitor extends CadetteCommandBaseVisitor<String> {
         else if (jtCtx.POCKET_SCREW_JT() != null) type = JointType.POCKET_SCREW;
         else return "Unknown joint type.";
 
+        // Extract optional modifiers (depth/screws/spacing) from joinArgs.
+        Float requestedDepthUnits = null;
+        int screwCount = 0;
+        float screwSpacingMm = 0;
+        for (var arg : ctx.joinArg()) {
+            float num = Float.parseFloat(arg.NUMBER().getText());
+            if (arg.DEPTH() != null) requestedDepthUnits = num;
+            else if (arg.SCREWS() != null) screwCount = (int) num;
+            else if (arg.SPACING() != null) screwSpacingMm = toMm(num);
+        }
+
         // For dado/rabbet: validate materials and compute depth
         String abbr = executor.getUnits().getAbbreviation();
         StringBuilder warnings = new StringBuilder();
@@ -515,8 +565,8 @@ public class CommandVisitor extends CadetteCommandBaseVisitor<String> {
                         receivingName, fromMm(receivingThicknessMm), abbr, type.getDisplayName()));
             }
 
-            if (ctx.DEPTH() != null && ctx.NUMBER().size() > 0) {
-                depthMm = toMm(Float.parseFloat(ctx.NUMBER(0).getText()));
+            if (requestedDepthUnits != null) {
+                depthMm = toMm(requestedDepthUnits);
             } else {
                 // Default to half the receiving material's thickness
                 depthMm = receivingThicknessMm / 2f;
@@ -529,19 +579,6 @@ public class CommandVisitor extends CadetteCommandBaseVisitor<String> {
                         fromMm(depthMm), abbr, fromMm(receivingThicknessMm), abbr));
                 depthMm = receivingThicknessMm;
             }
-        }
-
-        int screwCount = 0;
-        float screwSpacingMm = 0;
-        // Parse screws and spacing — they come after depth in the NUMBER list
-        var numbers = ctx.NUMBER();
-        int numIdx = (ctx.DEPTH() != null) ? 1 : 0;
-        if (ctx.SCREWS() != null && numIdx < numbers.size()) {
-            screwCount = Integer.parseInt(numbers.get(numIdx).getText());
-            numIdx++;
-        }
-        if (ctx.SPACING() != null && numIdx < numbers.size()) {
-            screwSpacingMm = toMm(Float.parseFloat(numbers.get(numIdx).getText()));
         }
 
         Joint joint = Joint.builder()
@@ -801,6 +838,28 @@ public class CommandVisitor extends CadetteCommandBaseVisitor<String> {
     public String visitExitCommand(CadetteCommandParser.ExitCommandContext ctx) {
         executor.fireExit();
         return "Exiting...";
+    }
+
+    @Override
+    public String visitStatsCommand(CadetteCommandParser.StatsCommandContext ctx) {
+        boolean visible = scene.toggleStats();
+        return "Stats display " + (visible ? "on" : "off") + ".";
+    }
+
+    @Override
+    public String visitDefineCommand(CadetteCommandParser.DefineCommandContext ctx) {
+        String name = extractName(ctx.objectName());
+        List<String> paramNames = new ArrayList<>();
+        Map<String, String> paramAliases = new LinkedHashMap<>();
+        for (var decl : ctx.paramDecl()) {
+            var names = decl.paramName();
+            String paramName = names.get(0).getText().toLowerCase();
+            paramNames.add(paramName);
+            if (names.size() > 1) {
+                paramAliases.put(names.get(1).getText().toLowerCase(), paramName);
+            }
+        }
+        return executor.beginDefine(name, paramNames, paramAliases);
     }
 
     // -- Parsing helpers --
@@ -1418,19 +1477,28 @@ public class CommandVisitor extends CadetteCommandBaseVisitor<String> {
             }
             return s;
         }
-        return ctx.ID().getText();
+        return ctx.nameLike().getText();
     }
 
-    private static String extractName(CadetteCommandParser.ObjectNameContext ctx) {
+    /**
+     * Extract an object name, applying the current template-instance prefix if set.
+     * E.g. during expansion of template instance "K", a body line's "left-side" returns "K/left-side".
+     */
+    private String extractName(CadetteCommandParser.ObjectNameContext ctx) {
+        String raw = rawObjectName(ctx);
+        String prefix = executor.getCurrentInstancePrefix();
+        return prefix != null ? prefix + "/" + raw : raw;
+    }
+
+    private static String rawObjectName(CadetteCommandParser.ObjectNameContext ctx) {
         if (ctx.STRING() != null) {
             String s = ctx.STRING().getText();
-            // Strip surrounding quotes
             if (s.length() >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
                 return s.substring(1, s.length() - 1);
             }
             return s;
         }
-        return ctx.ID().getText();
+        return ctx.nameLike().getText();
     }
 
     private String helpText() {

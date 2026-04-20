@@ -31,8 +31,6 @@ import java.nio.file.Path;
 import java.util.*;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Parses command text via the ANTLR grammar and delegates execution
@@ -70,6 +68,21 @@ public class CommandExecutor {
     private boolean suppressUndo = false;
     // Collect actions during script run (null when not collecting)
     private List<UndoableAction> collectingActions = null;
+
+    // Template-expansion context: when non-null, the visitor prefixes object-name
+    // references with "<prefix>/" so a body-line "left-side" becomes "K/left-side".
+    private String currentInstancePrefix = null;
+    // Set by visitor's visitCreatePartCommand after each part create, consumed by
+    // instantiateTemplate to collect the parts belonging to the new assembly.
+    private String lastCreatedPartName = null;
+
+    String getCurrentInstancePrefix() {
+        return currentInstancePrefix;
+    }
+
+    void setLastCreatedPartName(String name) {
+        lastCreatedPartName = name;
+    }
 
     public CommandExecutor(SceneManager scene) {
         this.scene = scene;
@@ -197,35 +210,19 @@ public class CommandExecutor {
                 return finishDefine();
             }
             if (definingTemplate) {
-                // Skip comments inside define blocks
-                if (trimmed.startsWith("#")) return "  (comment)";
                 definingBodyLines.add(trimmed);
                 return "  (recorded)";
             }
-            if (lower.startsWith("define ")) {
-                return startDefine(trimmed);
-            }
-
-            // -- Toggle stats display --
-            if (lower.equals("stats")) {
-                boolean visible = scene.toggleStats();
-                return "Stats display " + (visible ? "on" : "off") + ".";
-            }
-
             // -- Run command --
             if (lower.startsWith("run")) {
                 String rest = trimmed.substring(3).trim();
                 return handleRun(rest);
             }
 
-            // -- Template instantiation: create <template-name> "instance" ... --
-            if (lower.startsWith("create ")) {
-                String result = tryTemplateInstantiation(trimmed);
-                if (result != null) return result;
-            }
-
             // -- Normal ANTLR parsing --
-            String normalized = lowercaseOutsideQuotes(trimmed);
+            // Bare hyphenated template names (e.g. "create base-cabinet K ...") can't be
+            // tokenized as ID, so quote the second word when it matches a registered template.
+            String normalized = quoteTemplateNameIfNeeded(trimmed);
 
             CharStream chars = CharStreams.fromString(normalized);
             CadetteCommandLexer lexer = new CadetteCommandLexer(chars);
@@ -244,14 +241,17 @@ public class CommandExecutor {
                 }
             });
 
-            CadetteCommandParser.CommandContext cmd = parser.command();
+            CadetteCommandParser.InputContext inputCtx = parser.input();
 
             if (!errors.isEmpty()) {
                 return errors + "\nType 'help' for usage.";
             }
 
+            // Pure-comment or whitespace-only lines produce no command.
+            if (inputCtx.command() == null) return "";
+
             CommandVisitor visitor = new CommandVisitor(this, scene);
-            return visitor.visit(cmd);
+            return visitor.visit(inputCtx.command());
 
         } catch (Exception e) {
             return "Error: " + e.getMessage() + "\nType 'help' for usage.";
@@ -260,40 +260,14 @@ public class CommandExecutor {
 
     // ======================== Template Define ========================
 
-    private static final Pattern DEFINE_PATTERN = Pattern.compile(
-            "(?i)define\\s+(?:\"([^\"]+)\"|([a-zA-Z_][a-zA-Z0-9_-]*))" +
-            "(?:\\s+params?\\s+(.+))?");
-
-    // Matches "width(w)" or "width" — captures name and optional alias
-    private static final Pattern PARAM_WITH_ALIAS = Pattern.compile(
-            "([a-zA-Z_][a-zA-Z0-9_]*)(?:\\(([a-zA-Z_][a-zA-Z0-9_]*)\\))?");
-
-    private String startDefine(String line) {
-        Matcher m = DEFINE_PATTERN.matcher(line.trim());
-        if (!m.matches()) {
-            return "Invalid define syntax. Usage: define \"name\" params width(w), height(h), depth(d)";
-        }
-
-        definingTemplateName = m.group(1) != null ? m.group(1) : m.group(2);
-
-        definingParamNames = new ArrayList<>();
-        definingParamAliases = new LinkedHashMap<>();
-        if (m.group(3) != null) {
-            // Split on commas, then parse each param (possibly with alias)
-            for (String token : m.group(3).split(",")) {
-                token = token.trim();
-                if (token.isEmpty()) continue;
-                Matcher pm = PARAM_WITH_ALIAS.matcher(token);
-                if (pm.matches()) {
-                    String paramName = pm.group(1).toLowerCase();
-                    definingParamNames.add(paramName);
-                    if (pm.group(2) != null) {
-                        definingParamAliases.put(pm.group(2).toLowerCase(), paramName);
-                    }
-                }
-            }
-        }
-
+    /**
+     * Enter template-recording mode. Called by the visitor after ANTLR parses
+     * the define header. Subsequent lines are collected until "end define".
+     */
+    String beginDefine(String name, List<String> paramNames, Map<String, String> paramAliases) {
+        definingTemplateName = name;
+        definingParamNames = new ArrayList<>(paramNames);
+        definingParamAliases = new LinkedHashMap<>(paramAliases);
         definingBodyLines = new ArrayList<>();
         definingTemplate = true;
 
@@ -302,7 +276,6 @@ public class CommandExecutor {
             if (i > 0) paramDesc.append(", ");
             String pName = definingParamNames.get(i);
             paramDesc.append(pName);
-            // Find alias for this param
             definingParamAliases.entrySet().stream()
                     .filter(e -> e.getValue().equals(pName))
                     .findFirst()
@@ -333,47 +306,50 @@ public class CommandExecutor {
 
     // ======================== Template Instantiation ========================
 
-    // Pattern: create <template-name> "instance-name" param1 val1 param2 val2 ...
-    // or:      create <template-name> instance-name param1 val1 ...
-    private static final Pattern CREATE_TEMPLATE_PATTERN = Pattern.compile(
-            "(?i)create\\s+(?:\"([^\"]+)\"|([a-zA-Z_][a-zA-Z0-9_-]*))" +  // template name
-            "\\s+(?:\"([^\"]+)\"|([a-zA-Z_][a-zA-Z0-9_]*))" +              // instance name
-            "(\\s+.+)?");                                                    // param-value pairs
+    /** Relative placement info for a template instantiation. */
+    record RelativePlacement(String direction, String referenceName, float gapUnits) {}
 
-    private String tryTemplateInstantiation(String line) {
-        Matcher m = CREATE_TEMPLATE_PATTERN.matcher(line.trim());
-        if (!m.matches()) return null;
+    /**
+     * Quote a bare hyphenated template name so ANTLR can tokenize it. ANTLR's ID
+     * rule can't accept hyphens without breaking `-N` number parsing elsewhere, so
+     * we detect template names here and wrap them in quotes before parsing.
+     */
+    private String quoteTemplateNameIfNeeded(String input) {
+        String lower = input.toLowerCase();
+        int createLen;
+        if (lower.startsWith("create ")) createLen = 7;
+        else if (lower.startsWith("cr ")) createLen = 3;
+        else return input;
 
-        String templateName = m.group(1) != null ? m.group(1) : m.group(2);
+        int start = createLen;
+        while (start < input.length() && Character.isWhitespace(input.charAt(start))) start++;
+        if (start >= input.length() || input.charAt(start) == '"') return input;
 
-        // Skip known non-template keywords
-        String tl = templateName.toLowerCase();
-        if (tl.equals("part") || tl.equals("box") || tl.equals("sphere") || tl.equals("cylinder")) {
-            return null; // fall through to ANTLR
+        int end = start;
+        while (end < input.length() && !Character.isWhitespace(input.charAt(end))) end++;
+        String candidate = input.substring(start, end);
+        if (TemplateRegistry.instance().get(candidate) == null) return input;
+
+        return input.substring(0, start) + "\"" + candidate + "\"" + input.substring(end);
+    }
+
+    /**
+     * Instantiate a template. Called by the visitor after ANTLR parses the command.
+     * placement and relativePlacement are mutually exclusive — either or both may be null.
+     */
+    String instantiateTemplate(String templateName, String instanceName,
+                                Vector3f placement, RelativePlacement relativePlacement,
+                                Map<String, String> rawParamValues) {
+        Template template = TemplateRegistry.instance().get(templateName);
+        if (template == null) {
+            return "Template '" + templateName + "' not found.";
         }
 
-        Template template = TemplateRegistry.instance().get(templateName);
-        if (template == null) return null; // not a template, fall through
-
-        String instanceName = m.group(3) != null ? m.group(3) : m.group(4);
-        String paramsStr = m.group(5) != null ? m.group(5).trim() : "";
-
-        // Check for name collision
         if (scene.getAssembly(instanceName) != null) {
             return "Assembly '" + instanceName + "' already exists.";
         }
 
-        // Extract optional relative placement ("to left of a [gap N]")
-        String[] remainingParams = {paramsStr};
-        RelativePlacement relativePlacement = extractRelativePlacement(paramsStr, remainingParams);
-        paramsStr = remainingParams[0];
-
-        // Extract optional "at x,y,z" placement from the params string
-        float[] placement = {0, 0, 0};
-        paramsStr = extractPlacement(paramsStr, placement);
-
-        // Parse parameter values
-        Map<String, Double> vars = parseParamValues(template, paramsStr);
+        Map<String, Double> vars = resolveParamValues(template, rawParamValues);
         if (vars == null) {
             return "Usage: create " + templateName + " \"name\" "
                     + String.join(" ", template.getParamNames().stream()
@@ -402,21 +378,20 @@ public class CommandExecutor {
         StringBuilder output = new StringBuilder();
 
         suppressUndo = true;
+        String previousPrefix = currentInstancePrefix;
+        currentInstancePrefix = instanceName;
         try {
             for (String bodyLine : template.getBodyLines()) {
-                // Skip comments and blank lines
-                String trimmedLine = bodyLine.trim();
-                if (trimmedLine.isEmpty() || trimmedLine.startsWith("#")) continue;
+                if (bodyLine.trim().isEmpty()) continue;
 
-                String resolved = resolveTemplateLine(bodyLine, instanceName, vars);
+                String resolved = ExpressionEvaluator.substituteInLine(bodyLine, vars);
+                lastCreatedPartName = null;
                 String result = execute(resolved);
+                if (result.isEmpty()) continue;  // comment line
                 output.append("  ").append(result).append("\n");
 
-                // Track created parts for undo
-                // Find the part that was just created by checking the last part name
-                String partName = extractCreatedPartName(resolved, instanceName);
-                if (partName != null) {
-                    Part part = scene.getPart(partName);
+                if (lastCreatedPartName != null) {
+                    Part part = scene.getPart(lastCreatedPartName);
                     if (part != null) {
                         assembly.addPart(part);
                         createdParts.add(part);
@@ -425,17 +400,18 @@ public class CommandExecutor {
             }
         } finally {
             suppressUndo = false;
+            currentInstancePrefix = previousPrefix;
+            lastCreatedPartName = null;
         }
 
         // Normalize assembly position: shift all parts so the AABB min
         // is at the target placement (default 0,0,0). Uses rotation-aware bounds.
+        Vector3f targetMm = placement != null
+                ? new Vector3f(units.toMm(placement.x), units.toMm(placement.y), units.toMm(placement.z))
+                : Vector3f.ZERO.clone();
         {
-            com.jme3.math.Vector3f target = new com.jme3.math.Vector3f(
-                    units.toMm(placement[0]),
-                    units.toMm(placement[1]),
-                    units.toMm(placement[2]));
             com.jme3.math.Vector3f[] aabb = computeAssemblyAABB(createdParts);
-            com.jme3.math.Vector3f delta = target.subtract(aabb[0]);
+            com.jme3.math.Vector3f delta = targetMm.subtract(aabb[0]);
             if (delta.lengthSquared() > 0.001f) {
                 for (Part part : createdParts) {
                     SceneManager.ObjectRecord rec = scene.getObjectRecord(part.getName());
@@ -445,7 +421,6 @@ public class CommandExecutor {
                 }
             }
         }
-        boolean hasPlacement = placement[0] != 0 || placement[1] != 0 || placement[2] != 0;
 
         scene.registerAssembly(assembly);
 
@@ -500,8 +475,8 @@ public class CommandExecutor {
                     posStr += String.format(" (gap %.2f %s)", relativePlacement.gapUnits(), units.getAbbreviation());
                 }
             }
-        } else if (hasPlacement) {
-            posStr = String.format(" at (%.2f, %.2f, %.2f)", placement[0], placement[1], placement[2]);
+        } else if (placement != null) {
+            posStr = String.format(" at (%.2f, %.2f, %.2f)", placement.x, placement.y, placement.z);
         }
 
         pushAction(new CreateTemplateAction(scene, instanceName, templateName, createdParts));
@@ -510,95 +485,7 @@ public class CommandExecutor {
                 + output.toString().stripTrailing();
     }
 
-    /**
-     * Resolve a template body line: substitute $variables, evaluate arithmetic,
-     * and prefix part names with the instance name.
-     */
-    private String resolveTemplateLine(String line, String instanceName, Map<String, Double> vars) {
-        // Prefix part names: "left-side" → "instanceName/left-side"
-        String resolved = prefixPartNames(line, instanceName);
-
-        // Substitute variables and evaluate arithmetic
-        resolved = ExpressionEvaluator.substituteInLine(resolved, vars);
-
-        return resolved;
-    }
-
-    /**
-     * Prefix quoted part names with the instance name, but NOT material names.
-     * A quoted string is a part name unless it follows "material".
-     */
-    private String prefixPartNames(String line, String instanceName) {
-        // Find all quoted strings and prefix them unless preceded by "material"
-        Pattern quoted = Pattern.compile("(\\bmaterial\\s+)?\"([^\"]+)\"");
-        Matcher m = quoted.matcher(line);
-        StringBuilder sb = new StringBuilder();
-        while (m.find()) {
-            if (m.group(1) != null) {
-                // Preceded by "material" — leave the quoted string alone
-                m.appendReplacement(sb, Matcher.quoteReplacement(m.group(0)));
-            } else {
-                // Part name — prefix with instance name
-                m.appendReplacement(sb, Matcher.quoteReplacement("\"" + instanceName + "/" + m.group(2) + "\""));
-            }
-        }
-        m.appendTail(sb);
-        return sb.toString();
-    }
-
-    /** Extract the part name from a resolved create/rotate command. */
-    private String extractCreatedPartName(String line, String instanceName) {
-        // Look for create part "name" pattern
-        Matcher m = Pattern.compile("(?i)create\\s+part\\s+\"([^\"]+)\"").matcher(line);
-        if (m.find()) {
-            return m.group(1);
-        }
-        return null;
-    }
-
-    /**
-     * Extract "at x,y,z" or "@ x,y,z" from a params string.
-     * Populates the placement array and returns the params string with the at clause removed.
-     */
-    private String extractPlacement(String paramsStr, float[] placement) {
-        // Match: at/@ followed by three comma-separated numbers
-        Pattern atPattern = Pattern.compile(
-                "(?i)(?:at|@)\\s+(-?[0-9]*\\.?[0-9]+)\\s*,\\s*(-?[0-9]*\\.?[0-9]+)\\s*,\\s*(-?[0-9]*\\.?[0-9]+)");
-        Matcher m = atPattern.matcher(paramsStr);
-        if (m.find()) {
-            placement[0] = Float.parseFloat(m.group(1));
-            placement[1] = Float.parseFloat(m.group(2));
-            placement[2] = Float.parseFloat(m.group(3));
-            // Remove the at clause from the params string
-            return (paramsStr.substring(0, m.start()) + paramsStr.substring(m.end())).trim();
-        }
-        return paramsStr;
-    }
-
-    /**
-     * Extract "to left/right/behind/in front/above/below of <name> [gap N]" from params.
-     * Returns the relative placement info or null if not found.
-     */
-    private record RelativePlacement(String direction, String referenceName, float gapUnits) {}
-
-    private RelativePlacement extractRelativePlacement(String paramsStr, String[] remaining) {
-        Pattern relPattern = Pattern.compile(
-                "(?i)(?:to\\s+)?(left|right|behind|in[- ]front|above|below)\\s+(?:of\\s+)?" +
-                "(?:\"([^\"]+)\"|([a-zA-Z_][a-zA-Z0-9_-]*))" +
-                "(?:\\s+gap\\s+(-?[0-9]*\\.?[0-9]+))?");
-        Matcher m = relPattern.matcher(paramsStr);
-        if (m.find()) {
-            String dir = m.group(1).toLowerCase();
-            String ref = m.group(2) != null ? m.group(2) : m.group(3);
-            float gap = m.group(4) != null ? Float.parseFloat(m.group(4)) : 0;
-            remaining[0] = (paramsStr.substring(0, m.start()) + paramsStr.substring(m.end())).trim();
-            return new RelativePlacement(dir, ref, gap);
-        }
-        remaining[0] = paramsStr;
-        return null;
-    }
-
-    /** Common parameter name aliases. */
+    /** Common parameter name aliases (global fallback when template has none). */
     private static final Map<String, String> PARAM_ALIASES = Map.of(
             "w", "width",
             "h", "height",
@@ -609,50 +496,37 @@ public class CommandExecutor {
             "sz", "size"
     );
 
-    /** Resolve a parameter name alias to its canonical form. */
-    private static String resolveParamAlias(String name) {
-        return PARAM_ALIASES.getOrDefault(name, name);
-    }
-
     /**
-     * Parse "param1 val1 param2 val2" into a variable map.
-     * Resolves aliases using: (1) the template's own declared aliases, then
-     * (2) the global alias table as fallback.
+     * Resolve raw parameter key-value pairs against a template's declared params.
+     * Keys are resolved via template-specific aliases first, then global aliases.
+     * Returns null if any declared param is missing or non-numeric.
      */
-    private Map<String, Double> parseParamValues(Template template, String paramsStr) {
+    private Map<String, Double> resolveParamValues(Template template, Map<String, String> rawValues) {
         List<String> paramNames = template.getParamNames();
-        Map<String, Double> vars = new LinkedHashMap<>();
-
-        if (paramsStr.isEmpty() && !paramNames.isEmpty()) {
-            return null; // missing params
+        if (rawValues.isEmpty() && !paramNames.isEmpty()) {
+            return null;
         }
 
-        // Split into tokens and resolve aliases
-        String[] tokens = paramsStr.trim().split("\\s+");
-        Map<String, String> rawValues = new LinkedHashMap<>();
-        for (int i = 0; i < tokens.length - 1; i += 2) {
-            String key = tokens[i].toLowerCase();
-            // Try template-specific alias first, then global alias, then use as-is
+        Map<String, String> canonical = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : rawValues.entrySet()) {
+            String key = entry.getKey().toLowerCase();
             String resolved = template.resolveParam(key);
             if (resolved == null) {
-                resolved = resolveParamAlias(key);
+                resolved = PARAM_ALIASES.getOrDefault(key, key);
             }
-            rawValues.put(resolved, tokens[i + 1]);
+            canonical.put(resolved, entry.getValue());
         }
 
-        // Validate all declared params are provided
+        Map<String, Double> vars = new LinkedHashMap<>();
         for (String param : paramNames) {
-            String val = rawValues.get(param);
-            if (val == null) {
-                return null; // missing param
-            }
+            String val = canonical.get(param);
+            if (val == null) return null;
             try {
                 vars.put(param, Double.parseDouble(val));
             } catch (NumberFormatException e) {
-                return null; // non-numeric value
+                return null;
             }
         }
-
         return vars;
     }
 
@@ -703,10 +577,9 @@ public class CommandExecutor {
             for (String line : lines) {
                 lineNum++;
                 String trimmed = line.trim();
-                if (trimmed.isEmpty() || trimmed.startsWith("#")) {
-                    continue;
-                }
+                if (trimmed.isEmpty()) continue;
                 String result = execute(trimmed);
+                if (result.isEmpty()) continue;  // comment line
                 output.append(String.format("  [%d] %s → %s%n", lineNum, trimmed, result));
             }
         } finally {
@@ -771,20 +644,4 @@ public class CommandExecutor {
         };
     }
 
-    private static String lowercaseOutsideQuotes(String input) {
-        StringBuilder sb = new StringBuilder(input.length());
-        boolean inQuote = false;
-        for (int i = 0; i < input.length(); i++) {
-            char c = input.charAt(i);
-            if (c == '"') {
-                inQuote = !inQuote;
-                sb.append(c);
-            } else if (inQuote) {
-                sb.append(c);
-            } else {
-                sb.append(Character.toLowerCase(c));
-            }
-        }
-        return sb.toString();
-    }
 }
