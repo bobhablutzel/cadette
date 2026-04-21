@@ -89,11 +89,17 @@ public class CutSheetPanel extends JPanel implements javax.swing.Scrollable {
         }
     }
 
+    /** Regenerate the cached layouts if the scene has been marked dirty. Returns true if regenerated. */
+    private boolean rebuildCachedLayoutsIfDirty() {
+        if (!sceneManager.isCutSheetDirty()) return false;
+        cachedLayouts = SheetLayoutGenerator.generateLayouts(
+                sceneManager.getAllParts(), sceneManager.getKerfMm());
+        sceneManager.clearCutSheetDirty();
+        return true;
+    }
+
     private void refreshLayouts() {
-        if (sceneManager.isCutSheetDirty()) {
-            cachedLayouts = SheetLayoutGenerator.generateLayouts(
-                    sceneManager.getAllParts(), sceneManager.getKerfMm());
-            sceneManager.clearCutSheetDirty();
+        if (rebuildCachedLayoutsIfDirty()) {
             revalidate();
             repaint();
         }
@@ -102,12 +108,7 @@ public class CutSheetPanel extends JPanel implements javax.swing.Scrollable {
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
-
-        if (sceneManager.isCutSheetDirty()) {
-            cachedLayouts = SheetLayoutGenerator.generateLayouts(
-                    sceneManager.getAllParts(), sceneManager.getKerfMm());
-            sceneManager.clearCutSheetDirty();
-        }
+        rebuildCachedLayoutsIfDirty();
 
         hitRects.clear();
         Graphics2D g2 = (Graphics2D) g.create();

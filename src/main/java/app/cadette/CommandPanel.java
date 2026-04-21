@@ -19,6 +19,8 @@
 package app.cadette;
 
 import app.cadette.command.CommandExecutor;
+import lombok.Getter;
+import lombok.Setter;
 
 import javax.swing.*;
 import javax.swing.text.DefaultCaret;
@@ -47,7 +49,8 @@ public class CommandPanel extends JPanel {
 
     private final List<String> history = new ArrayList<>();
     private int historyIndex = -1;
-    private boolean commandActive = true;
+    @Getter private boolean commandActive = true;
+    @Setter private Runnable onFocusToggle;
 
     public CommandPanel(CommandExecutor executor) {
         this.executor = executor;
@@ -153,16 +156,6 @@ public class CommandPanel extends JPanel {
         if (onFocusToggle != null) {
             onFocusToggle.run();
         }
-    }
-
-    public boolean isCommandActive() {
-        return commandActive;
-    }
-
-    private Runnable onFocusToggle;
-
-    public void setOnFocusToggle(Runnable onFocusToggle) {
-        this.onFocusToggle = onFocusToggle;
     }
 
     private void onSubmit(ActionEvent e) {
