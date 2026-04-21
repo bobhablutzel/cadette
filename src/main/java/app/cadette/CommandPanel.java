@@ -61,7 +61,8 @@ public class CommandPanel extends JPanel {
         // Output area
         outputArea = new JTextArea();
         outputArea.setEditable(false);
-        outputArea.setFocusable(false);  // clicks don't steal focus from command input
+        // Focusable + non-editable: user can click to select/copy text. Clicking
+        // the input field brings typing focus back there.
         outputArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
         outputArea.setBackground(new Color(30, 30, 35));
         outputArea.setForeground(new Color(200, 200, 200));

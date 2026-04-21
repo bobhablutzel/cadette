@@ -95,6 +95,21 @@ public class MoveDialog {
         c.gridy = 6; c.gridx = 0; panel.add(new JLabel("Gap (" + abbr + "):"), c);
         c.gridx = 1; panel.add(gapField, c);
 
+        // Enable only the fields belonging to the selected mode, so users don't
+        // fill in one side and wonder why the other side got used.
+        Runnable syncEnabled = () -> {
+            boolean abs = absRadio.isSelected();
+            xField.setEnabled(abs);
+            yField.setEnabled(abs);
+            zField.setEnabled(abs);
+            dirCombo.setEnabled(!abs && hasReferences);
+            refCombo.setEnabled(!abs && hasReferences);
+            gapField.setEnabled(!abs && hasReferences);
+        };
+        absRadio.addActionListener(e -> syncEnabled.run());
+        relRadio.addActionListener(e -> syncEnabled.run());
+        syncEnabled.run();
+
         JButton ok = new JButton("OK");
         JButton cancel = new JButton("Cancel");
         JPanel buttonBar = new JPanel(new FlowLayout(FlowLayout.RIGHT));
