@@ -213,11 +213,6 @@ public class CommandExecutor {
                 definingBodyLines.add(trimmed);
                 return "  (recorded)";
             }
-            // -- Run command --
-            if (lower.startsWith("run")) {
-                String rest = trimmed.substring(3).trim();
-                return handleRun(rest);
-            }
 
             // -- Normal ANTLR parsing --
             CharStream chars = CharStreams.fromString(trimmed);
@@ -504,28 +499,20 @@ public class CommandExecutor {
 
     // ======================== Run / Script ========================
 
-    private String handleRun(String argument) {
-        Path file;
-        if (argument.isEmpty()) {
-            if (fileChooser == null) {
-                return "No file chooser available.";
-            }
-            file = fileChooser.get();
-            if (file == null) {
-                return "Cancelled.";
-            }
-        } else {
-            String path = argument;
-            if (path.startsWith("\"") && path.endsWith("\"") && path.length() >= 2) {
-                path = path.substring(1, path.length() - 1);
-            }
-            file = Path.of(path);
-        }
+    /** Called by the visitor when `run` has no path — prompt the user via the file chooser. */
+    String runWithFileChooser() {
+        if (fileChooser == null) return "No file chooser available.";
+        Path file = fileChooser.get();
+        if (file == null) return "Cancelled.";
+        if (!Files.exists(file)) return "File not found: " + file;
+        return runScript(file);
+    }
 
-        if (!Files.exists(file)) {
-            return "File not found: " + file;
-        }
-
+    /** Called by the visitor with an explicit path (already variable-expanded). */
+    String runScriptPath(String path) {
+        if (path.isEmpty()) return "Empty path.";
+        Path file = Path.of(path);
+        if (!Files.exists(file)) return "File not found: " + file;
         return runScript(file);
     }
 

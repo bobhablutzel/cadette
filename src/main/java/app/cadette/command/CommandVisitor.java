@@ -36,7 +36,7 @@ import java.util.Map;
  * ANTLR visitor that executes parsed commands against the SceneManager.
  * Each visit method returns a feedback string for the console.
  */
-public class CommandVisitor extends CadetteCommandBaseVisitor<String> {
+public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
 
     private final CommandExecutor executor;
     private final SceneManager scene;
@@ -844,6 +844,37 @@ public class CommandVisitor extends CadetteCommandBaseVisitor<String> {
     public String visitStatsCommand(CadetteCommandParser.StatsCommandContext ctx) {
         boolean visible = scene.toggleStats();
         return "Stats display " + (visible ? "on" : "off") + ".";
+    }
+
+    @Override
+    public String visitRunCommand(CadetteCommandParser.RunCommandContext ctx) {
+        if (ctx.pathExpr() == null) {
+            return executor.runWithFileChooser();
+        }
+        StringBuilder sb = new StringBuilder();
+        for (var seg : ctx.pathExpr().pathSegment()) {
+            if (seg.PATH_LITERAL() != null) {
+                sb.append(seg.PATH_LITERAL().getText());
+            } else if (seg.PATH_VAR() != null) {
+                sb.append(resolvePathVar(seg.PATH_VAR().getText().substring(1)));
+            } else if (seg.PATH_QUOTED() != null) {
+                String q = seg.PATH_QUOTED().getText();
+                sb.append(q, 1, q.length() - 1); // strip surrounding quotes
+            }
+        }
+        return executor.runScriptPath(sb.toString());
+    }
+
+    /** Resolve a path variable — home/user aliases first, then env vars. */
+    private static String resolvePathVar(String name) {
+        return switch (name.toLowerCase()) {
+            case "home" -> System.getProperty("user.home", "");
+            case "user" -> System.getProperty("user.name", "");
+            default -> {
+                String env = System.getenv(name);
+                yield env != null ? env : "$" + name;
+            }
+        };
     }
 
     @Override

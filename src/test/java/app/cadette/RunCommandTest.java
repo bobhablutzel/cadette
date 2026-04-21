@@ -1,0 +1,95 @@
+/*
+ * Copyright 2026 Bob Hablutzel
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Source: https://github.com/bobhablutzel/cadette
+ */
+
+package app.cadette;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+/**
+ * End-to-end tests for the `run` command.
+ * Covers the PATH_MODE lexer mode: bare paths, quoted paths, and $var expansion.
+ */
+class RunCommandTest extends HeadlessTestBase {
+
+    @BeforeEach
+    void clean() {
+        resetScene();
+    }
+
+    private Path writeScript(String... lines) throws IOException {
+        Path f = Files.createTempFile("cadette-run-", ".cds");
+        Files.write(f, List.of(lines));
+        f.toFile().deleteOnExit();
+        return f;
+    }
+
+    @Test
+    void runBarePath() throws IOException {
+        Path script = writeScript("create box foo size 1");
+        String result = exec("run " + script.toString());
+        assertTrue(result.contains("Running"), "Should confirm start: " + result);
+        assertNotNull(sceneManager.getObjectRecord("foo"), "Script should have created foo");
+    }
+
+    @Test
+    void runQuotedPath() throws IOException {
+        Path script = writeScript("create box quoted size 1");
+        String result = exec("run \"" + script.toString() + "\"");
+        assertTrue(result.contains("Running"), "Should confirm start: " + result);
+        assertNotNull(sceneManager.getObjectRecord("quoted"), "Script should have created quoted");
+    }
+
+    @Test
+    void runWithHomeVariable() throws IOException {
+        String home = System.getProperty("user.home");
+        assertNotNull(home, "user.home must be set for this test");
+        // Write the script into $HOME
+        Path script = Path.of(home, "cadette-home-test-" + System.nanoTime() + ".cds");
+        Files.writeString(script, "create box homebox size 1\n");
+        script.toFile().deleteOnExit();
+        try {
+            String scriptName = script.getFileName().toString();
+            String result = exec("run $HOME/" + scriptName);
+            assertTrue(result.contains("Running"), "Should confirm start: " + result);
+            assertNotNull(sceneManager.getObjectRecord("homebox"), "Script should have created homebox");
+        } finally {
+            Files.deleteIfExists(script);
+        }
+    }
+
+    @Test
+    void runMissingFile() {
+        String result = exec("run /definitely/does/not/exist.cds");
+        assertTrue(result.contains("File not found"), "Should report missing file: " + result);
+    }
+
+    @Test
+    void runWithNoPathAndNoChooser() {
+        // No fileChooser is registered on the executor → message instead of NPE
+        String result = exec("run");
+        assertTrue(result.contains("No file chooser available"), "Should report missing chooser: " + result);
+    }
+}

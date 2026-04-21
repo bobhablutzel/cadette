@@ -16,13 +16,11 @@
 // Source: https://github.com/bobhablutzel/cadette
 //
 
-grammar CadetteCommand;
+parser grammar CadetteCommandParser;
 
 options {
-    caseInsensitive = true;
+    tokenVocab = CadetteCommandLexer;
 }
-
-// Parser rules
 
 // Top-level entry: a single input may be empty (e.g. a pure-comment line, since
 // LINE_COMMENT is skipped at lex time) or a single command.
@@ -52,6 +50,7 @@ command
     | exitCommand
     | defineCommand
     | statsCommand
+    | runCommand
     ;
 
 createCommand
@@ -270,6 +269,22 @@ statsCommand
     : STATS
     ;
 
+// The RUN token switches the lexer to PATH_MODE so that path characters
+// (slashes, dots, variables, quoted strings) tokenize as PATH_* tokens.
+runCommand
+    : RUN pathExpr?
+    ;
+
+pathExpr
+    : pathSegment+
+    ;
+
+pathSegment
+    : PATH_LITERAL
+    | PATH_VAR
+    | PATH_QUOTED
+    ;
+
 paramDecl
     : paramName (LPAREN paramName RPAREN)?
     ;
@@ -323,97 +338,3 @@ color
 unitName
     : ID
     ;
-
-// Lexer rules
-CREATE     : 'create' | 'cr' ;
-DELETE     : 'delete' | 'del' ;
-MOVE       : 'move' | 'mv' ;
-RESIZE     : 'resize' ;
-ROTATE     : 'rotate' | 'rot' ;
-JOIN       : 'join' ;
-WITH       : 'with' ;
-BUTT_JT    : 'butt' ;
-DADO_JT    : 'dado' ;
-RABBET_JT  : 'rabbet' ;
-POCKET_SCREW_JT : 'pocket_screw' | 'pocket-screw' | 'pocketscrew' | 'pocket' ;
-SCREWS     : 'screws' ;
-SPACING    : 'spacing' ;
-JOINTS     : 'joints' ;
-CUTLIST    : 'cutlist' | 'cut-list' | 'cutsheet' | 'cut-sheet' ;
-BOM        : 'bom' ;
-EXPORT     : 'export' ;
-PDF        : 'pdf' ;
-PNG        : 'png' ;
-JPEG       : 'jpeg' | 'jpg' ;
-LAYOUT     : 'layout' | 'layouts' ;
-KERF       : 'kerf' ;
-TABS       : 'tabs' | 'tabbed' ;
-SPLIT      : 'split' | 'split-pane' | 'side-by-side' ;
-ALIGN      : 'align' ;
-GAP        : 'gap' ;
-OF         : 'of' ;
-// Direction / face tokens (used by both relative positioning and align)
-IN_FRONT   : 'in front' | 'in-front' ;
-LEFT_KW    : 'left' ;
-RIGHT_KW   : 'right' ;
-BEHIND     : 'behind' ;
-ABOVE      : 'above' ;
-BELOW      : 'below' ;
-FRONT      : 'front' ;
-BACK       : 'back' ;
-TOP        : 'top' ;
-BOTTOM     : 'bottom' ;
-TO         : 'to' ;
-DISPLAY    : 'display' ;
-HIDE       : 'hide' ;
-NAME       : 'name' ;
-NAMES      : 'names' ;
-PART       : 'part' | 'p' ;
-MATERIAL   : 'material' | 'mat' ;
-GRAIN      : 'grain' | 'gr' ;
-VERTICAL   : 'vertical' | 'vert' | 'v' ;
-HORIZONTAL : 'horizontal' | 'horiz' | 'hz' ;
-ANY_KW     : 'any' ;
-MATERIALS  : 'materials' ;
-TEMPLATE   : 'template' ;
-TEMPLATES  : 'templates' ;
-INFO       : 'info' ;
-LIST       : 'list' | 'ls' ;
-SHOW       : 'show' ;
-SET        : 'set' ;
-OBJECTS    : 'objects' ;
-UNITS      : 'units' ;
-UNDO       : 'undo' ;
-REDO       : 'redo' ;
-HELP       : 'help' | '?' ;
-EXIT       : 'exit' | 'quit' | 'q' ;
-DEFINE     : 'define' ;
-PARAMS     : 'params' | 'param' ;
-STATS      : 'stats' ;
-LPAREN     : '(' ;
-RPAREN     : ')' ;
-AT         : 'at' | '@' ;
-SIZE       : 'size' | 'sz' ;
-WIDTH      : 'width' | 'w' ;
-HEIGHT     : 'height' | 'h' ;
-DEPTH      : 'depth' | 'd' ;
-COLOR      : 'color' | 'col' ;
-ALL        : 'all' ;
-
-BOX        : 'box' ;
-SPHERE     : 'sphere' ;
-CYLINDER   : 'cylinder' ;
-
-RED        : 'red' ;
-GREEN      : 'green' ;
-BLUE       : 'blue' ;
-YELLOW     : 'yellow' ;
-WHITE      : 'white' ;
-
-COMMA      : ',' ;
-NUMBER     : '-'? ( [0-9]+ ('.' [0-9]*)? | '.' [0-9]+ ) ;
-HEX_COLOR  : '#' [0-9a-fA-F]+ ;
-STRING     : '"' ~["]* '"' ;
-ID         : [a-zA-Z_] [a-zA-Z0-9_]* ;
-WS         : [ \t\r\n]+ -> skip ;
-LINE_COMMENT : '#' ~[\r\n]* -> skip ;
