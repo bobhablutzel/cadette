@@ -44,6 +44,7 @@ public class CutSheetPanel extends JPanel implements javax.swing.Scrollable {
     private Set<String> selectedParts = Set.of();
     private final List<CutSheetRenderer.PartRect> hitRects = new ArrayList<>();
     private SelectionManager selectionManager;
+    @lombok.Setter private PartContextMenu contextMenu;
 
     // Hand-coded: sets the panel background and wires both a scene-change
     // listener and a mouse listener. Not a @RequiredArgsConstructor candidate.
@@ -54,11 +55,33 @@ public class CutSheetPanel extends JPanel implements javax.swing.Scrollable {
         sceneManager.addSceneChangeListener(() -> SwingUtilities.invokeLater(this::refreshLayouts));
 
         addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                handleClick(e);
+            // Popup trigger fires on mousePressed on some platforms and mouseReleased
+            // on others, so check both.
+            @Override public void mousePressed(MouseEvent e)  { maybeShowContextMenu(e); }
+            @Override public void mouseReleased(MouseEvent e) { maybeShowContextMenu(e); }
+            @Override public void mouseClicked(MouseEvent e) {
+                if (!e.isPopupTrigger() && SwingUtilities.isLeftMouseButton(e)) {
+                    handleClick(e);
+                }
             }
         });
+    }
+
+    private void maybeShowContextMenu(MouseEvent e) {
+        if (!e.isPopupTrigger() || contextMenu == null) return;
+        String partName = findPartAt(e.getX(), e.getY());
+        if (partName != null) {
+            contextMenu.showAt(this, e.getX(), e.getY(), partName);
+        }
+    }
+
+    /** Return the name of the part rectangle at (x, y), or null if none. Topmost wins. */
+    private String findPartAt(int x, int y) {
+        for (int i = hitRects.size() - 1; i >= 0; i--) {
+            CutSheetRenderer.PartRect pr = hitRects.get(i);
+            if (pr.rect().contains(x, y)) return pr.partName();
+        }
+        return null;
     }
 
     public void setSelectionManager(SelectionManager selectionManager) {

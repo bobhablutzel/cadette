@@ -154,6 +154,14 @@ Selection uses PowerPoint-style two-level drill-down:
 3. Clicking a part in a **different** assembly selects that assembly
 4. **Shift+click** adds/removes from the selection (multi-select)
 
+**Right-click** on a part (3D viewport or cut sheet) opens a context menu with:
+- **Info** — show the part's properties in the command output
+- **Move…** — modal dialog with absolute (x/y/z) or relative (direction + reference + optional gap) placement
+- **Rotate…** — modal dialog for x/y/z rotation in degrees
+- **Delete** — remove the part
+
+Each action builds the equivalent CADette command and runs it through the executor, so the result is echoed in the command output and participates in undo/redo like any typed command.
+
 Selection clears automatically when the scene changes (creating/deleting parts). Selection info is printed in the command output panel.
 
 ### Inspection
@@ -354,10 +362,14 @@ If built-in templates should use the new joint type, update their definitions in
 
 ### Next Up
 
-- Right-click context menu on selected objects (move, rotate, delete, info)
 - Export multiple assembled units as a new reusable template
 
 ### Backlog
+
+- Constraint / auto-reflow layout: when an assembly moves (or grows), dependent
+  assemblies placed relative to it shift to preserve their relationship, and
+  placement commands detect collisions before committing. Likely a persistent
+  relationship graph + re-layout pass rather than one-shot coordinate math.
 
 - Drag-to-move for selected parts and assemblies
 - Optional 3D background views (floor plane for cabinets, workbench surface, etc.)

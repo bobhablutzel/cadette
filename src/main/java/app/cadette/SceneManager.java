@@ -585,6 +585,15 @@ public class SceneManager extends SimpleApplication {
         });
     }
 
+    /** Connect the right-click context menu handler for 3D-viewport right-clicks. */
+    public void setContextMenuRequestHandler(CameraController.ContextMenuRequestHandler handler) {
+        enqueue(() -> {
+            if (cameraController != null) {
+                cameraController.setContextMenuRequestHandler(handler);
+            }
+        });
+    }
+
     private static final ColorRGBA OUTLINE_COLOR = new ColorRGBA(0.2f, 0.6f, 1.0f, 1f);
     private static final float OUTLINE_SCALE = 1.04f;
     private static final String OUTLINE_PREFIX = "outline_";

@@ -71,6 +71,9 @@ public class CadetteApp {
         SelectionManager selectionManager = new SelectionManager(sceneManager);
         wireSelectionHighlights(selectionManager, commandPanel);
 
+        // Right-click context menu — shared by the cut sheet panel and the 3D viewport.
+        PartContextMenu contextMenu = new PartContextMenu(sceneManager, selectionManager, executor, commandPanel);
+
         // Viewport panel = canvas + settings bar along the bottom edge
         JPanel viewportPanel = new JPanel(new BorderLayout());
         viewportPanel.add(canvas, BorderLayout.CENTER);
@@ -79,6 +82,12 @@ public class CadetteApp {
         // Cut sheet panel (scrollable)
         CutSheetPanel cutSheetPanel = new CutSheetPanel(sceneManager, executor::getUnits);
         cutSheetPanel.setSelectionManager(selectionManager);
+        cutSheetPanel.setContextMenu(contextMenu);
+
+        // 3D viewport right-click: camera controller picks a part, we show the menu
+        // on the AWT canvas at the cursor position. Swing popups must run on the EDT.
+        sceneManager.setContextMenuRequestHandler((awtX, awtY, partName) ->
+                SwingUtilities.invokeLater(() -> contextMenu.showAt(canvas, awtX, awtY, partName)));
         JScrollPane cutSheetScroll = new JScrollPane(cutSheetPanel);
         cutSheetScroll.setBorder(null);
         cutSheetScroll.getVerticalScrollBar().setUnitIncrement(40);

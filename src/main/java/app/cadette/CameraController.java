@@ -91,9 +91,22 @@ public class CameraController extends BaseAppState implements AnalogListener, Ac
 
     // Click detection: track mouse position on left-press
     private Vector2f leftPressPos = null;
+    // Same for right-press — distinguishes a right-click-without-drag (context menu)
+    // from a drag (camera rotate).
+    private Vector2f rightPressPos = null;
     private boolean shiftHeld = false;
     private SelectionManager selectionManager;
     private Node pickableNode;  // the node to ray-cast against (objectsNode)
+    @lombok.Setter private ContextMenuRequestHandler contextMenuRequestHandler;
+
+    /**
+     * Callback fired when the user right-clicks (without dragging) on a part.
+     * Coordinates are in AWT space (origin top-left), ready to hand to a Swing popup.
+     */
+    @FunctionalInterface
+    public interface ContextMenuRequestHandler {
+        void onRequest(int awtX, int awtY, String partName);
+    }
 
     /** Set the selection manager and the node to pick against. */
     public void setSelectionManager(SelectionManager selectionManager, Node pickableNode) {
@@ -145,7 +158,19 @@ public class CameraController extends BaseAppState implements AnalogListener, Ac
     @Override
     public void onAction(String name, boolean isPressed, float tpf) {
         switch (name) {
-            case ROTATE_DRAG -> rotating = isPressed;
+            case ROTATE_DRAG -> {
+                rotating = isPressed;
+                if (isPressed) {
+                    rightPressPos = inputManager.getCursorPosition().clone();
+                } else if (rightPressPos != null) {
+                    Vector2f releasePos = inputManager.getCursorPosition();
+                    float dist = rightPressPos.distance(releasePos);
+                    if (dist < CLICK_THRESHOLD) {
+                        handleRightClick(releasePos);
+                    }
+                    rightPressPos = null;
+                }
+            }
             case SHIFT_KEY -> shiftHeld = isPressed;
             case PAN_DRAG -> {
                 panning = isPressed;
@@ -163,39 +188,55 @@ public class CameraController extends BaseAppState implements AnalogListener, Ac
         }
     }
 
+    /**
+     * Right-click without drag: ray-cast for the part under the cursor and
+     * fire the context-menu handler with AWT coordinates. Selection is
+     * intentionally untouched — the menu targets the clicked part only.
+     */
+    private void handleRightClick(Vector2f screenPos) {
+        if (contextMenuRequestHandler == null || pickableNode == null) return;
+        String partName = pickPartAt(screenPos);
+        if (partName == null) return;
+        // Convert jME3 (origin bottom-left) to AWT (origin top-left) coordinates.
+        int canvasHeight = cam.getHeight();
+        int awtX = (int) screenPos.x;
+        int awtY = canvasHeight - (int) screenPos.y;
+        contextMenuRequestHandler.onRequest(awtX, awtY, partName);
+    }
+
     /** Ray cast from the camera through the click point and select the hit object. */
     private void handleClick(Vector2f screenPos, boolean shiftDown) {
         if (selectionManager == null || pickableNode == null) return;
+        String partName = pickPartAt(screenPos);
+        if (partName != null) {
+            selectionManager.selectByPartName(partName, shiftDown);
+            return;
+        }
+        // Clicked empty space — deselect all (unless shift is held)
+        if (!shiftDown) {
+            selectionManager.deselect();
+        }
+    }
 
-        // Build a ray from the camera through the click point
+    /** Ray-cast at the given screen position and return the topmost part name, or null. */
+    private String pickPartAt(Vector2f screenPos) {
+        if (pickableNode == null) return null;
         Vector3f worldPos = cam.getWorldCoordinates(screenPos, 0f);
         Vector3f direction = cam.getWorldCoordinates(screenPos, 1f)
                 .subtractLocal(worldPos).normalizeLocal();
         Ray ray = new Ray(worldPos, direction);
 
-        // Collision test against all pickable geometry
         CollisionResults results = new CollisionResults();
         pickableNode.collideWith(ray, results);
 
-        if (results.size() > 0) {
-            // Skip outline geometries (they're not real objects)
-            for (int i = 0; i < results.size(); i++) {
-                CollisionResult hit = results.getCollision(i);
-                String geomName = hit.getGeometry().getName();
-                if (geomName != null && geomName.startsWith("outline_")) continue;
-
-                String partName = resolvePartName(hit.getGeometry());
-                if (partName != null) {
-                    selectionManager.selectByPartName(partName, shiftDown);
-                    return;
-                }
-            }
+        for (int i = 0; i < results.size(); i++) {
+            CollisionResult hit = results.getCollision(i);
+            String geomName = hit.getGeometry().getName();
+            if (geomName != null && geomName.startsWith("outline_")) continue;
+            String partName = resolvePartName(hit.getGeometry());
+            if (partName != null) return partName;
         }
-
-        // Clicked empty space — deselect all (unless shift is held)
-        if (!shiftDown) {
-            selectionManager.deselect();
-        }
+        return null;
     }
 
     /**
