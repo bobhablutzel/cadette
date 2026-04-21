@@ -1591,6 +1591,7 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
                       units: """ + UnitSystem.allNames() + """
 
                   run [file]                       — run a .cds script (opens file dialog if omitted)
+                                                     Scripts may start with '#! cadette' as a file identifier.
                   undo                             — undo last action (also Ctrl+Z)
                   redo                             — redo last undone action (also Ctrl+Shift+Z)
                   help                             — show this help text

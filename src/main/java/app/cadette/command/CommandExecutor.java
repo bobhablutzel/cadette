@@ -502,6 +502,19 @@ public class CommandExecutor {
         StringBuilder output = new StringBuilder();
         output.append("Running ").append(file.getFileName()).append("...\n");
 
+        // Shebang identifier check: warn if the first non-empty line is a
+        // shebang that doesn't mention "cadette". The line itself is still
+        // processed normally — it's a comment to the lexer and gets skipped.
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) continue;
+            if (trimmed.startsWith("#!") && !trimmed.toLowerCase().contains("cadette")) {
+                output.append("  Warning: first-line shebang does not identify this as a ")
+                        .append("CADette script — expected '#! cadette'. Proceeding anyway.\n");
+            }
+            break;
+        }
+
         // Collect all individual actions into a single composite undo action
         List<UndoableAction> previousCollecting = collectingActions;
         collectingActions = new ArrayList<>();

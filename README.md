@@ -210,6 +210,16 @@ exit
 
 Save commands in `.cds` files and run them with the `run` command. A startup script at `~/.cadette/startup.cds` auto-runs on launch.
 
+Scripts can optionally begin with a shebang identifier to mark them as CADette scripts:
+
+```
+#! cadette
+set units mm
+create base_cabinet k1 w 500 h 600 d 400
+```
+
+The shebang is a comment to the parser (and therefore a no-op at execution time), but `run` will warn if it finds a shebang that doesn't mention `cadette` — a guardrail against accidentally running a shell or Python script.
+
 Script execution is atomic for undo — a single undo reverts the entire script.
 
 ## Materials
@@ -351,7 +361,6 @@ If built-in templates should use the new joint type, update their definitions in
 
 - Drag-to-move for selected parts and assemblies
 - Optional 3D background views (floor plane for cabinets, workbench surface, etc.)
-- Script file format shebang identifier
 - Shelf count logic for the shelf_unit template
 - Additional joint types: dovetails, biscuits, dowels, splines
 - Wood grain textures and shaders
