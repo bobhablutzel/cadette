@@ -48,8 +48,10 @@ public class SheetLayoutGenerator {
             List<Part> materialParts = entry.getValue();
             Material mat = materialParts.get(0).getMaterial();
 
-            // Skip non-sheet goods
-            if (mat.getSheetWidthMm() == null || mat.getSheetHeightMm() == null) {
+            // Only sheet goods go through the guillotine packer. Solid lumber
+            // is packed elsewhere (or not at all yet); slab and hardware are
+            // counted per-piece in the BOM.
+            if (mat.getKind() != MaterialKind.SHEET_GOOD) {
                 continue;
             }
 

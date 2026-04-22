@@ -68,7 +68,7 @@ public class GuillotinePacker {
      * @return list of sheet layouts, one per sheet needed
      */
     public static List<SheetLayout> pack(Material material, List<PackingPart> parts, float kerfMm) {
-        if (material.getSheetWidthMm() == null || material.getSheetHeightMm() == null) {
+        if (material.getKind() != MaterialKind.SHEET_GOOD) {
             return List.of();
         }
 

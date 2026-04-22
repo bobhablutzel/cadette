@@ -18,16 +18,17 @@
 
 package app.cadette.model;
 
-// Describes the *substance* of a material. Orthogonal to MaterialKind, which
-// describes how the material is *handled* (sheet layout vs. solid lumber vs.
-// slab vs. hardware). A hardboard panel is MaterialType.HARDBOARD + MaterialKind.SHEET_GOOD;
-// a granite slab is MaterialType.STONE + MaterialKind.SLAB.
-public enum MaterialType {
-    PLYWOOD,
-    HARDBOARD,
-    HARDWOOD,
-    SOFTWOOD,
-    MDF,
-    METAL,
-    STONE
+// Describes how a material is handled in the cut-planning pipeline. Orthogonal
+// to MaterialType (which describes substance). The sheet layout / BOM paths
+// branch on kind, not on whether sheet dimensions happen to be set.
+public enum MaterialKind {
+    // Rectangular stock sold in sheets; handled by the guillotine packer.
+    SHEET_GOOD,
+    // Boards sold in linear lengths; packed as runout from longer stock.
+    SOLID_LUMBER,
+    // Stone, engineered stone, quartz, laminate. Typically project-specific;
+    // BOM reports per-piece, layout does not attempt to pack.
+    SLAB,
+    // Fasteners, pulls, hinges, glides — counted, not cut.
+    HARDWARE
 }

@@ -533,6 +533,14 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         else if (jtCtx.POCKET_SCREW_JT() != null) type = JointType.POCKET_SCREW;
         else return "Unknown joint type.";
 
+        // Validate that the joint can work in both materials. Today this is
+        // a MaterialType-only check; thickness and receiver/inserted asymmetry
+        // are parked as future work (see memory project_joint_future_work).
+        Part receivingPart = scene.getPart(receivingName);
+        Part insertedPart = scene.getPart(insertedName);
+        String incompatibility = checkJointMaterialCompatibility(type, receivingPart, insertedPart);
+        if (incompatibility != null) return incompatibility;
+
         // Extract optional modifiers (depth/screws/spacing) from joinArgs.
         Float requestedDepthUnits = null;
         int screwCount = 0;
@@ -551,7 +559,6 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
 
         if (type.isAffectsGeometry()) {
             // Look up the receiving part's material thickness
-            Part receivingPart = scene.getPart(receivingName);
             float receivingThicknessMm = receivingPart != null
                     ? receivingPart.getThicknessMm()
                     : scene.getObjectRecord(receivingName).size().z; // fallback for primitives
@@ -873,6 +880,31 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         return executor.runScriptPath(sb.toString());
     }
 
+    /**
+     * Check whether the given joint type can physically work in both parts'
+     * materials. Returns null if compatible, or an error message naming the
+     * first incompatible part if not. Only substance (MaterialType) is checked;
+     * thickness and asymmetric rules are future work.
+     */
+    private static String checkJointMaterialCompatibility(JointType type, Part receiving, Part inserted) {
+        for (var entry : new Part[][] { {receiving, null}, {inserted, null} }) {
+            Part p = entry[0];
+            if (p == null) continue; // primitive, not a part — skip material check
+            var mat = p.getMaterial();
+            if (mat == null) continue;
+            if (!type.supports(mat.getType())) {
+                return String.format(
+                        "Cannot make a %s joint in '%s' (%s). %s not applicable to %s.",
+                        type.getDisplayName().toLowerCase(),
+                        p.getName(),
+                        mat.getDisplayName(),
+                        type.getDisplayName(),
+                        mat.getType().name().toLowerCase());
+            }
+        }
+        return null;
+    }
+
     /** Resolve a path variable — home/user aliases first, then env vars. */
     private static String resolvePathVar(String name) {
         return switch (name.toLowerCase()) {
@@ -1050,11 +1082,13 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         StringBuilder sb = new StringBuilder("Available materials:\n");
         String abbr = executor.getUnits().getAbbreviation();
         for (var mat : MaterialCatalog.instance().getAll()) {
-            sb.append(String.format("  %-22s %-30s  thickness: %.2f %s  type: %s",
+            sb.append(String.format("  %-22s %-30s  thickness: %.2f %s  type: %s  kind: %s",
                     mat.getName(), mat.getDisplayName(),
                     fromMm(mat.getThicknessMm()), abbr,
-                    mat.getType().name().toLowerCase()));
-            if (mat.getSheetWidthMm() != null) {
+                    mat.getType().name().toLowerCase(),
+                    mat.getKind().name().toLowerCase()));
+            if (mat.getKind() == app.cadette.model.MaterialKind.SHEET_GOOD
+                    && mat.getSheetWidthMm() != null) {
                 sb.append(String.format("  sheet: %.0f x %.0f %s",
                         fromMm(mat.getSheetWidthMm()), fromMm(mat.getSheetHeightMm()), abbr));
             }

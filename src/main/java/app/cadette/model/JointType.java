@@ -19,19 +19,50 @@
 package app.cadette.model;
 
 import lombok.Getter;
-import lombok.RequiredArgsConstructor;
 
+import java.util.EnumSet;
+import java.util.Set;
+
+// Each joint type declares which MaterialType substances it can physically
+// work in. Compatibility lives on the joint, not on the material, so adding
+// a new joint (biscuit, domino, dovetail) is a one-line update here rather
+// than a boolean-per-material sweep.
+//
+// Known future work (see memory `project_joint_future_work.md`):
+//   - Thickness-dependent rules (pocket screws need ~1/2"+ stock, dados
+//     can't exceed receiving thickness).
+//   - Asymmetric joints: the receiving vs. inserted material may have
+//     different requirements (pocket screw bites the receiver).
+// Today's check is coarse — MaterialType only — and that's fine for the
+// joints we currently support.
 @Getter
-@RequiredArgsConstructor
 public enum JointType {
-    BUTT("Butt joint", false),
-    DADO("Dado", true),
-    RABBET("Rabbet", true),
-    POCKET_SCREW("Pocket screw", false);
+    BUTT("Butt joint", false,
+            EnumSet.allOf(MaterialType.class)),
+    DADO("Dado", true,
+            EnumSet.of(MaterialType.PLYWOOD, MaterialType.HARDWOOD,
+                    MaterialType.SOFTWOOD, MaterialType.MDF)),
+    RABBET("Rabbet", true,
+            EnumSet.of(MaterialType.PLYWOOD, MaterialType.HARDBOARD,
+                    MaterialType.HARDWOOD, MaterialType.SOFTWOOD, MaterialType.MDF)),
+    POCKET_SCREW("Pocket screw", false,
+            EnumSet.of(MaterialType.PLYWOOD, MaterialType.HARDWOOD,
+                    MaterialType.SOFTWOOD, MaterialType.MDF));
     // Future: BISCUIT, DOWEL, DOVETAIL, MORTISE_TENON, BOX_JOINT
 
     private final String displayName;
     private final boolean affectsGeometry;
+    private final Set<MaterialType> applicableTypes;
+
+    JointType(String displayName, boolean affectsGeometry, Set<MaterialType> applicableTypes) {
+        this.displayName = displayName;
+        this.affectsGeometry = affectsGeometry;
+        this.applicableTypes = applicableTypes;
+    }
+
+    public boolean supports(MaterialType materialType) {
+        return materialType != null && applicableTypes.contains(materialType);
+    }
 
     public static JointType fromString(String text) {
         String lower = text.toLowerCase().replace('-', '_').replace(' ', '_');

@@ -31,10 +31,11 @@ import lombok.Data;
 public class Material {
     private final String name;          // slug, e.g. "plywood-3/4"
     private final String displayName;   // human-readable, e.g. "3/4\" Cabinet Plywood"
-    private final MaterialType type;
+    private final MaterialType type;    // substance (PLYWOOD, HARDWOOD, STONE, ...)
+    private final MaterialKind kind;    // handling (SHEET_GOOD, SOLID_LUMBER, SLAB, HARDWARE)
     private final float thicknessMm;
-    private final Float sheetWidthMm;   // null for non-sheet goods
-    private final Float sheetHeightMm;  // null for non-sheet goods
+    private final Float sheetWidthMm;   // populated for SHEET_GOOD; null otherwise
+    private final Float sheetHeightMm;  // populated for SHEET_GOOD; null otherwise
     private final GrainDirection grainDirection;
     private final MeasurementSystem measurementSystem;
     private final ColorRGBA displayColor;

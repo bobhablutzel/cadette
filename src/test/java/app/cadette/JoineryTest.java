@@ -153,13 +153,17 @@ class JoineryTest extends HeadlessTestBase {
 
     @Test
     void testThinMaterialWarning() {
-        exec("create base_cabinet K w 500 h 600 d 400");
-        // Back is 5.5mm hardboard — too thin to receive a dado
-        String result = exec("join \"K/back\" to \"K/bottom\" with dado");
+        // Dado into a thin-but-compatible plywood should trigger the
+        // "you're probably going the wrong direction" warning. (Hardboard would
+        // be rejected outright by the material-type compatibility check, which
+        // is a different path — see testDadoRejectedOnHardboard.)
+        exec("create part \"thin_back\" material \"plywood-6mm\" size 200, 200 at 0, 0, 0");
+        exec("create part \"thick_side\" material \"plywood-18mm\" size 200, 200 at 0, 0, 0");
+        String result = exec("join \"thin_back\" to \"thick_side\" with dado");
         System.out.println(result);
 
-        assertTrue(result.contains("Warning"), "Should warn about thin material");
-        assertTrue(result.contains("reversing"), "Should suggest reversing direction");
+        assertTrue(result.contains("Warning"), "Should warn about thin material: " + result);
+        assertTrue(result.contains("reversing"), "Should suggest reversing direction: " + result);
     }
 
     @Test
