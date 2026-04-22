@@ -89,6 +89,9 @@ HELP       : 'help' | '?' ;
 EXIT       : 'exit' | 'quit' | 'q' ;
 DEFINE     : 'define' ;
 PARAMS     : 'params' | 'param' ;
+USING      : 'using' ;
+NONE       : 'none' ;
+WHICH      : 'which' ;
 STATS      : 'stats' ;
 RUN        : 'run' -> pushMode(PATH_MODE) ;
 LPAREN     : '(' ;
@@ -115,6 +118,11 @@ COMMA      : ',' ;
 NUMBER     : '-'? ( [0-9]+ ('.' [0-9]*)? | '.' [0-9]+ ) ;
 HEX_COLOR  : '#' [0-9a-fA-F]+ ;
 STRING     : '"' ~["]* '"' ;
+// Slash-qualified identifier (e.g. "standard/cabinets/base_cabinet"). Each
+// segment is Java-identifier-like; at least one slash is required so a bare
+// name still lexes as ID. Longest-match rule picks QUALIFIED_NAME when a
+// slash follows the first segment.
+QUALIFIED_NAME : [a-zA-Z_] [a-zA-Z0-9_]* ('/' [a-zA-Z_] [a-zA-Z0-9_]*)+ ;
 ID         : [a-zA-Z_] [a-zA-Z0-9_]* ;
 WS         : [ \t\r\n]+ -> skip ;
 LINE_COMMENT : '#' ~[\r\n]* -> skip ;

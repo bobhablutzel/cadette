@@ -49,6 +49,8 @@ command
     | helpCommand
     | exitCommand
     | defineCommand
+    | usingCommand
+    | whichCommand
     | statsCommand
     | runCommand
     ;
@@ -79,7 +81,15 @@ partArg
     ;
 
 createTemplateCommand
-    : CREATE objectName objectName templateArg*
+    : CREATE templateRef objectName templateArg*
+    ;
+
+// Template references accept bare names (ID / keyword tokens), slash-qualified
+// names ("standard/cabinets/base_cabinet"), or quoted strings.
+templateRef
+    : QUALIFIED_NAME
+    | STRING
+    | nameLike
     ;
 
 templateArg
@@ -209,7 +219,7 @@ listCommand
 showCommand
     : SHOW showTarget
     | SHOW INFO objectName
-    | SHOW TEMPLATE objectName
+    | SHOW TEMPLATE templateRef
     ;
 
 showTarget
@@ -263,7 +273,23 @@ exitCommand
     ;
 
 defineCommand
-    : DEFINE objectName (PARAMS paramDecl (COMMA paramDecl)*)?
+    : DEFINE templateRef (PARAMS paramDecl (COMMA paramDecl)*)?
+    ;
+
+// `using standard/cabinets` — scopes bare template references so
+// `create base_cabinet` resolves to `standard/cabinets/base_cabinet`.
+// Script-scoped: a `using` inside a `run`-invoked script is undone when
+// the script finishes. A `using` inside the startup script persists.
+usingCommand
+    : USING templateRef     # usingAdd
+    | USING NONE            # usingClear
+    ;
+
+// `which base_cabinet` — prints the fully-qualified name that would be
+// resolved, and the file it came from. Uses the same resolution path as
+// `create`, so it faithfully reports what `create` would pick.
+whichCommand
+    : WHICH templateRef
     ;
 
 statsCommand

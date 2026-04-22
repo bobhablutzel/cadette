@@ -75,4 +75,28 @@ class TemplateRegistryTest {
         assertThrows(IllegalArgumentException.class,
                 () -> TemplateRegistry.instance().register(template("has space")));
     }
+
+    @Test
+    void acceptsSlashQualifiedName() {
+        assertDoesNotThrow(() -> TemplateRegistry.instance()
+                .register(template("standard/cabinets/base_cabinet_test_xyz")));
+    }
+
+    @Test
+    void rejectsTrailingSlash() {
+        assertThrows(IllegalArgumentException.class,
+                () -> TemplateRegistry.instance().register(template("standard/")));
+    }
+
+    @Test
+    void rejectsLeadingSlash() {
+        assertThrows(IllegalArgumentException.class,
+                () -> TemplateRegistry.instance().register(template("/standard/foo")));
+    }
+
+    @Test
+    void rejectsEmptySegment() {
+        assertThrows(IllegalArgumentException.class,
+                () -> TemplateRegistry.instance().register(template("a//b")));
+    }
 }

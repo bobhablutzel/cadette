@@ -80,11 +80,10 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
 
     @Override
     public String visitCreateTemplateCommand(CadetteCommandParser.CreateTemplateCommandContext ctx) {
-        var names = ctx.objectName();
         // Template name is a registry lookup, never a scene reference — never prefix it.
         // Instance name is the new object; extractName applies any outer template's prefix.
-        String templateName = rawObjectName(names.get(0));
-        String instanceName = extractName(names.get(1));
+        String templateName = templateRefText(ctx.templateRef());
+        String instanceName = extractName(ctx.objectName());
 
         Vector3f placement = null;
         CommandExecutor.RelativePlacement relPlacement = null;
@@ -695,8 +694,8 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
             return showInfo(extractName(ctx.objectName()));
         }
         // show template <name>
-        if (ctx.TEMPLATE() != null && ctx.objectName() != null) {
-            return showTemplateDefinition(extractName(ctx.objectName()));
+        if (ctx.TEMPLATE() != null && ctx.templateRef() != null) {
+            return showTemplateDefinition(templateRefText(ctx.templateRef()));
         }
 
         var target = ctx.showTarget();
@@ -888,7 +887,7 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
 
     @Override
     public String visitDefineCommand(CadetteCommandParser.DefineCommandContext ctx) {
-        String name = extractName(ctx.objectName());
+        String name = templateRefText(ctx.templateRef());
         List<String> paramNames = new ArrayList<>();
         Map<String, String> paramAliases = new LinkedHashMap<>();
         for (var decl : ctx.paramDecl()) {
@@ -900,6 +899,28 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
             }
         }
         return executor.beginDefine(name, paramNames, paramAliases);
+    }
+
+    @Override
+    public String visitUsingAdd(CadetteCommandParser.UsingAddContext ctx) {
+        String ns = templateRefText(ctx.templateRef());
+        return executor.addUsingNamespace(ns);
+    }
+
+    @Override
+    public String visitUsingClear(CadetteCommandParser.UsingClearContext ctx) {
+        executor.clearUsingNamespaces();
+        return "Cleared `using` namespaces.";
+    }
+
+    @Override
+    public String visitWhichCommand(CadetteCommandParser.WhichCommandContext ctx) {
+        String ref = templateRefText(ctx.templateRef());
+        CommandExecutor.TemplateResolution res = executor.resolveTemplate(ref);
+        if (res.template() == null) return res.errorMessage();
+        Template t = res.template();
+        String src = t.getSource() != null ? t.getSource() : "(unknown source)";
+        return ref + " → " + t.getName() + "\n  source: " + src;
     }
 
     // -- Parsing helpers --
@@ -972,8 +993,15 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
 
         // List assemblies first
         for (Assembly assembly : assemblies.values()) {
-            String templateLabel = assembly.getTemplateName() != null
-                    ? " [" + assembly.getTemplateName() + "]" : "";
+            String templateLabel = "";
+            String tmplName = assembly.getTemplateName();
+            if (tmplName != null) {
+                Template tmpl = TemplateRegistry.instance().get(tmplName);
+                String src = tmpl != null ? tmpl.getSource() : null;
+                templateLabel = src != null
+                        ? " [" + tmplName + " from " + src + "]"
+                        : " [" + tmplName + "]";
+            }
             sb.append(String.format("\n  %-20s assembly%s (%d parts)%n",
                     assembly.getName(), templateLabel, assembly.getParts().size()));
             for (Part p : assembly.getParts()) {
@@ -1175,10 +1203,11 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
                         .findFirst()
                         .ifPresent(e -> params.append("(").append(e.getKey()).append(")"));
             }
-            sb.append(String.format("  %-20s params: %-40s  %d lines%s%n",
+            String src = t.getSource() != null ? t.getSource() : "unknown";
+            sb.append(String.format("  %-36s params: %-36s  %d lines%n      source: %s%n",
                     t.getName(), params,
                     t.getBodyLines().size(),
-                    t.isBuiltIn() ? "  (built-in)" : ""));
+                    src));
         }
         sb.append("\nUsage: create <template> \"name\" param1 value1 ...");
         sb.append("\n       Aliases work: create base_cabinet K w 600 h 900 d 400");
@@ -1541,6 +1570,23 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         return ctx.nameLike().getText();
     }
 
+    /**
+     * Extract a template name from a templateRef (QUALIFIED_NAME, STRING, or nameLike).
+     * Template names are never prefixed with the current instance prefix — they're
+     * registry lookups, not scene-local references.
+     */
+    private static String templateRefText(CadetteCommandParser.TemplateRefContext ctx) {
+        if (ctx.QUALIFIED_NAME() != null) return ctx.QUALIFIED_NAME().getText();
+        if (ctx.STRING() != null) {
+            String s = ctx.STRING().getText();
+            if (s.length() >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
+                return s.substring(1, s.length() - 1);
+            }
+            return s;
+        }
+        return ctx.nameLike().getText();
+    }
+
     private String helpText() {
         return """
                 Available commands:
@@ -1602,11 +1648,17 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
                 Startup script: ~/.cadette/startup.cds (auto-runs on launch if present)
 
                 Templates:
-                  define "name" params p1, p2, ...   — start template definition
+                  define <name|ns/.../name> params p1, p2, ...   — start template definition
                     <commands with $variable references and arithmetic>
                   end define                         — finish definition
                   create <template> "name" p1 v1 p2 v2 ...  — instantiate a template
-                  show templates                     — list available templates
+                      <template> may be bare (base_cabinet) or qualified (standard/cabinets/base_cabinet).
+                      Bare names resolve via `using` namespaces, then registry-wide uniqueness.
+                  using <namespace>                  — prefer templates under this namespace for bare lookups
+                      Scope: script-local for `run`-invoked scripts; session-wide in ~/.cadette/startup.cds.
+                  using none                         — clear all `using` namespaces (useful at the top of a script)
+                  which <template>                   — show the resolved fully-qualified name and source file
+                  show templates                     — list available templates (with source files)
 
                 Coordinates and sizes are in current units (default: mm).
                 $thickness is implicit (from default material).

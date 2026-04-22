@@ -58,6 +58,9 @@ public abstract class HeadlessTestBase {
         assertTrue(ready.await(10, TimeUnit.SECONDS), "Engine failed to start");
 
         executor = new CommandExecutor(sceneManager);
+        // Bundled only — the developer's ~/.cadette/templates/ must not bleed
+        // into test results.
+        executor.loadBundledTemplates();
     }
 
     @AfterAll
@@ -73,6 +76,7 @@ public abstract class HeadlessTestBase {
         flushQueue();
         exec("set units mm");
         executor.clearUndoHistory();
+        executor.clearUsingNamespaces();
         flushQueue();
     }
 

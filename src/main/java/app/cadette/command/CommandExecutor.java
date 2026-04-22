@@ -29,12 +29,17 @@ import lombok.Setter;
 import org.antlr.v4.runtime.*;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.URL;
+import java.nio.file.FileSystem;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 /**
  * Parses command text via the ANTLR grammar and delegates execution
@@ -73,9 +78,18 @@ public class CommandExecutor {
     // Collect actions during script run (null when not collecting)
     private List<UndoableAction> collectingActions = null;
 
+    // When non-null, the loader is reading a .cds file and any template
+    // registered via `finishDefine` gets this string tagged as its source.
+    private String currentLoadingSource = null;
+
     // Template-expansion context: when non-null, the visitor prefixes object-name
     // references with "<prefix>/" so a body-line "left-side" becomes "K/left-side".
     @Getter(AccessLevel.PACKAGE) private String currentInstancePrefix = null;
+
+    // Ordered list of namespace prefixes searched when a bare template name
+    // (no slashes) is referenced. Mutated by the `using` command. Script-scoped:
+    // see runScriptIsolated.
+    private List<String> usingNamespaces = new ArrayList<>();
     // Set by visitor's visitCreatePartCommand after each part create, consumed by
     // instantiateTemplate to collect the parts belonging to the new assembly.
     @Setter(AccessLevel.PACKAGE) private String lastCreatedPartName = null;
@@ -253,8 +267,9 @@ public class CommandExecutor {
     }
 
     private String finishDefine() {
+        String src = currentLoadingSource != null ? currentLoadingSource : "interactive";
         Template template = new Template(definingTemplateName, definingParamNames,
-                definingParamAliases, definingBodyLines, false);
+                definingParamAliases, definingBodyLines, false, src);
         TemplateRegistry.instance().register(template);
 
         String msg = "Template '" + definingTemplateName + "' defined ("
@@ -282,10 +297,14 @@ public class CommandExecutor {
     String instantiateTemplate(String templateName, String instanceName,
                                 Vector3f placement, RelativePlacement relativePlacement,
                                 Map<String, String> rawParamValues) {
-        Template template = TemplateRegistry.instance().get(templateName);
-        if (template == null) {
-            return "Template '" + templateName + "' not found.";
+        TemplateResolution resolution = resolveTemplate(templateName);
+        if (resolution.template == null) {
+            return resolution.errorMessage;
         }
+        Template template = resolution.template;
+        // Use the canonical (resolved) name for downstream metadata so assemblies
+        // record the fully-qualified template name even when invoked with a bare alias.
+        templateName = template.getName();
 
         if (scene.getAssembly(instanceName) != null) {
             return "Assembly '" + instanceName + "' already exists.";
@@ -472,6 +491,270 @@ public class CommandExecutor {
         return vars;
     }
 
+    // ======================== Template Resolution / Using ========================
+
+    /** Result of resolving a possibly-bare template name. Exactly one field is non-null. */
+    record TemplateResolution(Template template, String errorMessage) {
+        static TemplateResolution found(Template t) { return new TemplateResolution(t, null); }
+        static TemplateResolution error(String msg) { return new TemplateResolution(null, msg); }
+    }
+
+    /**
+     * Resolve a template reference to a registry entry.
+     * A qualified name (contains '/') is looked up exactly.
+     * A bare name is tried against each using-namespace in order, then
+     * against the registry for a unique last-segment match.
+     */
+    TemplateResolution resolveTemplate(String name) {
+        TemplateRegistry registry = TemplateRegistry.instance();
+
+        // Qualified names (containing '/') are always exact-match — no fallbacks.
+        if (name.contains("/")) {
+            Template t = registry.get(name);
+            return t != null ? TemplateResolution.found(t)
+                    : TemplateResolution.error("Template '" + name + "' not found.");
+        }
+
+        // Bare name: `using` namespaces take priority — the whole point of
+        // `using foo` is that `create bar` should prefer `foo/bar` even if a
+        // template literally named `bar` also happens to exist.
+        for (String ns : usingNamespaces) {
+            Template candidate = registry.get(ns + "/" + name);
+            if (candidate != null) return TemplateResolution.found(candidate);
+        }
+
+        // No using namespace matched — exact bare match is next.
+        Template exact = registry.get(name);
+        if (exact != null) return TemplateResolution.found(exact);
+
+        // Fall back to registry-wide uniqueness of the last path segment.
+        String lowered = name.toLowerCase();
+        List<Template> matches = new ArrayList<>();
+        for (Template reg : registry.getAll()) {
+            String regName = reg.getName().toLowerCase();
+            int slash = regName.lastIndexOf('/');
+            String last = slash >= 0 ? regName.substring(slash + 1) : regName;
+            if (last.equals(lowered)) matches.add(reg);
+        }
+        if (matches.size() == 1) return TemplateResolution.found(matches.get(0));
+        if (matches.isEmpty()) {
+            return TemplateResolution.error("Template '" + name + "' not found.");
+        }
+        StringBuilder sb = new StringBuilder("Template '").append(name).append("' is ambiguous:");
+        for (Template m : matches) sb.append("\n  ").append(m.getName());
+        sb.append("\nUse the fully-qualified name or add a `using` statement.");
+        return TemplateResolution.error(sb.toString());
+    }
+
+    /** Called by the visitor to append to the using-namespace list. */
+    String addUsingNamespace(String namespace) {
+        String trimmed = namespace.trim();
+        // Strip a trailing slash so `using standard/` behaves like `using standard`.
+        while (trimmed.endsWith("/")) trimmed = trimmed.substring(0, trimmed.length() - 1);
+        if (trimmed.isEmpty()) return "Empty namespace.";
+        if (!usingNamespaces.contains(trimmed)) {
+            usingNamespaces.add(trimmed);
+        }
+        return "Using '" + trimmed + "' for bare template names.";
+    }
+
+    /** Snapshot the using list — used to isolate user-invoked script scope. */
+    List<String> snapshotUsingNamespaces() {
+        return new ArrayList<>(usingNamespaces);
+    }
+
+    /** Restore a previously snapshotted using list. */
+    void restoreUsingNamespaces(List<String> snapshot) {
+        usingNamespaces = new ArrayList<>(snapshot);
+    }
+
+    /** Clear all using-namespaces. Exposed for tests to isolate REPL state. */
+    public void clearUsingNamespaces() {
+        usingNamespaces.clear();
+    }
+
+    // ======================== Template Loading ========================
+
+    /**
+     * Load all templates from classpath ({@code resources/templates/}) and from
+     * {@code ~/.cadette/templates/}. Filesystem templates override classpath
+     * entries of the same name, with a warning. Called once at application startup.
+     */
+    public void loadTemplates() {
+        loadBundledTemplates();
+        Path fsRoot = Path.of(System.getProperty("user.home"), ".cadette", "templates");
+        if (Files.isDirectory(fsRoot)) {
+            loadTemplatesFromFilesystem(fsRoot);
+        }
+    }
+
+    /**
+     * Load only the bundled (classpath) templates, skipping user-local ones.
+     * Tests use this so results don't depend on whatever the developer has
+     * in {@code ~/.cadette/templates/}.
+     */
+    public void loadBundledTemplates() {
+        loadTemplatesFromClasspath();
+    }
+
+    private void loadTemplatesFromClasspath() {
+        URL rootUrl = CommandExecutor.class.getResource("/templates");
+        if (rootUrl == null) return;
+        URI uri;
+        try {
+            uri = rootUrl.toURI();
+        } catch (Exception e) {
+            System.err.println("Could not locate bundled templates: " + e.getMessage());
+            return;
+        }
+        if ("jar".equals(uri.getScheme())) {
+            try (FileSystem fs = FileSystems.newFileSystem(uri, Map.of())) {
+                loadTemplatesFromTree(fs.getPath("/templates"), /*isClasspath=*/true);
+            } catch (IOException e) {
+                System.err.println("Could not open bundled templates jar: " + e.getMessage());
+            }
+        } else {
+            loadTemplatesFromTree(Path.of(uri), /*isClasspath=*/true);
+        }
+    }
+
+    private void loadTemplatesFromFilesystem(Path root) {
+        loadTemplatesFromTree(root, /*isClasspath=*/false);
+    }
+
+    /**
+     * Load template files from an arbitrary filesystem directory. Files are
+     * treated as user-provided (i.e. they override classpath entries with a
+     * warning on stderr). Used by tests and reserved for a future `set path`
+     * command. The directory must exist; this method does not create it.
+     */
+    public void loadTemplatesFromDirectory(Path root) {
+        if (!Files.isDirectory(root)) return;
+        loadTemplatesFromFilesystem(root);
+    }
+
+    private void loadTemplatesFromTree(Path root, boolean isClasspath) {
+        // Collect first so we can sort for deterministic load order.
+        List<Path> files = new ArrayList<>();
+        try (Stream<Path> stream = Files.walk(root)) {
+            stream.filter(Files::isRegularFile)
+                    .filter(p -> p.toString().endsWith(".cds"))
+                    .forEach(files::add);
+        } catch (IOException e) {
+            System.err.println("Could not walk template root '" + root + "': " + e.getMessage());
+            return;
+        }
+        files.sort(Comparator.comparing(p -> root.relativize(p).toString()));
+
+        for (Path file : files) {
+            loadOneTemplateFile(root, file, isClasspath);
+        }
+    }
+
+    private void loadOneTemplateFile(Path root, Path file, boolean isClasspath) {
+        String rel = root.relativize(file).toString().replace('\\', '/');
+        String expectedName = rel.substring(0, rel.length() - ".cds".length());
+        String expectedKey = expectedName.toLowerCase();
+
+        TemplateRegistry registry = TemplateRegistry.instance();
+        Template existing = registry.get(expectedName);
+        if (existing != null && !isClasspath) {
+            System.err.println("Filesystem template '" + file + "' overrides classpath template '"
+                    + expectedName + "'.");
+        }
+
+        List<String> lines;
+        try {
+            lines = Files.readAllLines(file);
+        } catch (IOException e) {
+            System.err.println("Could not read template '" + file + "': " + e.getMessage());
+            return;
+        }
+
+        // Snapshot the registry before the file runs so we can detect any
+        // templates it registers and reject ones that don't match the filename.
+        Set<String> keysBefore = new HashSet<>();
+        for (Template t : registry.getAll()) keysBefore.add(t.getName().toLowerCase());
+
+        boolean prevSuppress = suppressUndo;
+        String prevSource = currentLoadingSource;
+        suppressUndo = true;
+        currentLoadingSource = (isClasspath ? "classpath:" : "") + file.toString();
+        try {
+            for (String line : lines) {
+                String trimmed = line.trim();
+                if (trimmed.isEmpty()) continue;
+                String result = execute(trimmed);
+                // Surface anything that looks like an error so bad files don't fail silently.
+                if (result != null && (result.startsWith("Parse error:") || result.startsWith("Error:"))) {
+                    System.err.println("Template '" + file + "': " + result.split("\n", 2)[0]);
+                }
+            }
+            // If the file left us in define-recording mode, bail out cleanly.
+            if (definingTemplate) {
+                System.err.println("Template '" + file + "' did not end its define block.");
+                definingTemplate = false;
+                definingTemplateName = null;
+                definingParamNames = null;
+                definingParamAliases = null;
+                definingBodyLines = null;
+            }
+        } finally {
+            suppressUndo = prevSuppress;
+            currentLoadingSource = prevSource;
+        }
+
+        // Reconcile what the file registered against its filename-derived name.
+        // Rule: exactly one template may be registered per file, and its name
+        // must match the filename. Anything else is a contract violation — roll
+        // it back so the misnamed template doesn't silently shadow real ones.
+        List<String> newlyRegistered = new ArrayList<>();
+        for (Template t : registry.getAll()) {
+            String key = t.getName().toLowerCase();
+            if (!keysBefore.contains(key)) newlyRegistered.add(t.getName());
+        }
+
+        if (newlyRegistered.isEmpty()) {
+            System.err.println("Template file '" + file
+                    + "' did not define any template.");
+            return;
+        }
+
+        boolean expectedPresent = newlyRegistered.stream()
+                .anyMatch(n -> n.toLowerCase().equals(expectedKey));
+
+        if (!expectedPresent) {
+            System.err.println("Template file '" + file + "' defines "
+                    + quoteList(newlyRegistered) + " but the filename implies '"
+                    + expectedName + "'. Rejecting misnamed template(s).");
+            for (String n : newlyRegistered) registry.unregister(n);
+            return;
+        }
+
+        if (newlyRegistered.size() > 1) {
+            // One matched; others are extras. Keep the match, reject the rest.
+            List<String> extras = new ArrayList<>();
+            for (String n : newlyRegistered) {
+                if (!n.toLowerCase().equals(expectedKey)) {
+                    extras.add(n);
+                    registry.unregister(n);
+                }
+            }
+            System.err.println("Template file '" + file + "' defined extra template(s) "
+                    + quoteList(extras) + " beyond the expected '" + expectedName
+                    + "'. One template per file — extras rejected.");
+        }
+    }
+
+    private static String quoteList(List<String> names) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < names.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append("'").append(names.get(i)).append("'");
+        }
+        return sb.toString();
+    }
+
     // ======================== Run / Script ========================
 
     /** Called by the visitor when `run` has no path — prompt the user via the file chooser. */
@@ -480,7 +763,7 @@ public class CommandExecutor {
         Path file = fileChooser.get();
         if (file == null) return "Cancelled.";
         if (!Files.exists(file)) return "File not found: " + file;
-        return runScript(file);
+        return runScriptIsolated(file);
     }
 
     /** Called by the visitor with an explicit path (already variable-expanded). */
@@ -488,7 +771,22 @@ public class CommandExecutor {
         if (path.isEmpty()) return "Empty path.";
         Path file = Path.of(path);
         if (!Files.exists(file)) return "File not found: " + file;
-        return runScript(file);
+        return runScriptIsolated(file);
+    }
+
+    /**
+     * Run a script with script-scoped `using` isolation: any `using` statements
+     * inside the script are undone when the script finishes. Used for the `run`
+     * command. Startup scripts intentionally do NOT use this variant so that
+     * startup-configured `using` namespaces persist for the session.
+     */
+    public String runScriptIsolated(Path file) {
+        List<String> snapshot = snapshotUsingNamespaces();
+        try {
+            return runScript(file);
+        } finally {
+            restoreUsingNamespaces(snapshot);
+        }
     }
 
     public String runScript(Path file) {

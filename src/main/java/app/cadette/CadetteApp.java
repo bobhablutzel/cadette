@@ -75,6 +75,7 @@ public class CadetteApp {
         executor.setOnExit(() -> shutdown(frame));
         executor.setFileChooser(scriptOpenChooser(frame));
         executor.setSaveFileChooser(exportSaveChooser(frame));
+        executor.loadTemplates();
 
         CommandPanel commandPanel = new CommandPanel(executor);
         SelectionManager selectionManager = new SelectionManager(sceneManager);
