@@ -41,6 +41,7 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -103,9 +104,7 @@ public class CommandExecutor {
     // Hand-coded: fires change listeners on write. @Setter can't express dispatch.
     public void setUnits(UnitSystem units) {
         this.units = units;
-        for (Consumer<UnitSystem> listener : unitChangeListeners) {
-            listener.accept(units);
-        }
+        unitChangeListeners.forEach(l -> l.accept(units));
     }
 
     public void addUnitChangeListener(Consumer<UnitSystem> listener) {
@@ -115,9 +114,7 @@ public class CommandExecutor {
     // Hand-coded: fires change listeners on write. @Setter can't express dispatch.
     public void setDefaultMaterial(Material material) {
         this.defaultMaterial = material;
-        for (Consumer<Material> listener : materialChangeListeners) {
-            listener.accept(material);
-        }
+        materialChangeListeners.forEach(l -> l.accept(material));
     }
 
     public void addMaterialChangeListener(Consumer<Material> listener) {
@@ -127,9 +124,7 @@ public class CommandExecutor {
     // Hand-coded: fires change listeners on write. @Setter can't express dispatch.
     public void setLayoutMode(ViewLayoutMode mode) {
         this.layoutMode = mode;
-        for (Consumer<ViewLayoutMode> listener : layoutChangeListeners) {
-            listener.accept(mode);
-        }
+        layoutChangeListeners.forEach(l -> l.accept(mode));
     }
 
     public void addLayoutChangeListener(Consumer<ViewLayoutMode> listener) {
@@ -253,16 +248,13 @@ public class CommandExecutor {
         definingBodyLines = new ArrayList<>();
         definingTemplate = true;
 
-        StringBuilder paramDesc = new StringBuilder();
-        for (int i = 0; i < definingParamNames.size(); i++) {
-            if (i > 0) paramDesc.append(", ");
-            String pName = definingParamNames.get(i);
-            paramDesc.append(pName);
-            definingParamAliases.entrySet().stream()
-                    .filter(e -> e.getValue().equals(pName))
-                    .findFirst()
-                    .ifPresent(e -> paramDesc.append("(").append(e.getKey()).append(")"));
-        }
+        String paramDesc = definingParamNames.stream()
+                .map(pName -> pName + definingParamAliases.entrySet().stream()
+                        .filter(e -> e.getValue().equals(pName))
+                        .findFirst()
+                        .map(e -> "(" + e.getKey() + ")")
+                        .orElse(""))
+                .collect(Collectors.joining(", "));
 
         return "Defining template '" + definingTemplateName + "'"
                 + (definingParamNames.isEmpty() ? "..." : " (params: " + paramDesc + ")...");
@@ -376,12 +368,7 @@ public class CommandExecutor {
             com.jme3.math.Vector3f[] aabb = computeAssemblyAABB(createdParts);
             com.jme3.math.Vector3f delta = targetMm.subtract(aabb[0]);
             if (delta.lengthSquared() > 0.001f) {
-                for (Part part : createdParts) {
-                    SceneManager.ObjectRecord rec = scene.getObjectRecord(part.getName());
-                    if (rec != null) {
-                        scene.moveObject(part.getName(), rec.position().add(delta));
-                    }
-                }
+                shiftParts(createdParts, delta);
             }
         }
 
@@ -395,9 +382,7 @@ public class CommandExecutor {
             SceneManager.ObjectRecord refRec = scene.getObjectRecord(refName);
             if (refAssembly == null && refRec == null) {
                 // Undo the creation — clean up parts and assembly
-                for (Part part : createdParts.reversed()) {
-                    scene.deleteObject(part.getName());
-                }
+                createdParts.reversed().forEach(part -> scene.deleteObject(part.getName()));
                 scene.removeAssembly(instanceName);
                 return "Reference '" + refName + "' not found. Assembly not created.";
             } else {
@@ -426,12 +411,7 @@ public class CommandExecutor {
 
                 com.jme3.math.Vector3f moveDelta = targetPos.subtract(srcBBox[0]);
                 if (moveDelta.lengthSquared() > 0.001f) {
-                    for (Part part : createdParts) {
-                        SceneManager.ObjectRecord rec = scene.getObjectRecord(part.getName());
-                        if (rec != null) {
-                            scene.moveObject(part.getName(), rec.position().add(moveDelta));
-                        }
-                    }
+                    shiftParts(createdParts, moveDelta);
                 }
                 posStr = " " + relativePlacement.direction() + " '" + refName + "'";
                 if (relativePlacement.gapUnits() != 0) {
@@ -470,15 +450,12 @@ public class CommandExecutor {
             return null;
         }
 
-        Map<String, String> canonical = new LinkedHashMap<>();
-        for (Map.Entry<String, String> entry : rawValues.entrySet()) {
-            String key = entry.getKey().toLowerCase();
-            String resolved = template.resolveParam(key);
-            if (resolved == null) {
-                resolved = PARAM_ALIASES.getOrDefault(key, key);
-            }
-            canonical.put(resolved, entry.getValue());
-        }
+        Map<String, String> canonical = rawValues.entrySet().stream()
+                .collect(Collectors.toMap(
+                        e -> canonicalParamKey(template, e.getKey()),
+                        Map.Entry::getValue,
+                        (a, b) -> b,   // last-wins on duplicate resolved keys
+                        LinkedHashMap::new));
 
         Map<String, Double> vars = new LinkedHashMap<>();
         for (String param : paramNames) {
@@ -491,6 +468,16 @@ public class CommandExecutor {
             }
         }
         return vars;
+        // Kept imperative: early-return on the first missing/non-numeric value
+        // doesn't fit streams cleanly (would require exception-wrapping
+        // gymnastics or a two-pass validate-then-collect).
+    }
+
+    /** Canonicalize a user-supplied param key via the template's own aliases, then global aliases. */
+    private static String canonicalParamKey(Template template, String rawKey) {
+        String lower = rawKey.toLowerCase();
+        String resolved = template.resolveParam(lower);
+        return resolved != null ? resolved : PARAM_ALIASES.getOrDefault(lower, lower);
     }
 
     // ======================== Template Resolution / Using ========================
@@ -520,10 +507,11 @@ public class CommandExecutor {
         // Bare name: `using` namespaces take priority — the whole point of
         // `using foo` is that `create bar` should prefer `foo/bar` even if a
         // template literally named `bar` also happens to exist.
-        for (String ns : usingNamespaces) {
-            Template candidate = registry.get(ns + "/" + name);
-            if (candidate != null) return TemplateResolution.found(candidate);
-        }
+        Optional<Template> usingHit = usingNamespaces.stream()
+                .map(ns -> registry.get(ns + "/" + name))
+                .filter(Objects::nonNull)
+                .findFirst();
+        if (usingHit.isPresent()) return TemplateResolution.found(usingHit.get());
 
         // No using namespace matched — exact bare match is next.
         Template exact = registry.get(name);
@@ -531,21 +519,25 @@ public class CommandExecutor {
 
         // Fall back to registry-wide uniqueness of the last path segment.
         String lowered = name.toLowerCase();
-        List<Template> matches = new ArrayList<>();
-        for (Template reg : registry.getAll()) {
-            String regName = reg.getName().toLowerCase();
-            int slash = regName.lastIndexOf('/');
-            String last = slash >= 0 ? regName.substring(slash + 1) : regName;
-            if (last.equals(lowered)) matches.add(reg);
-        }
+        List<Template> matches = registry.getAll().stream()
+                .filter(reg -> lastSegment(reg.getName().toLowerCase()).equals(lowered))
+                .toList();
         if (matches.size() == 1) return TemplateResolution.found(matches.get(0));
         if (matches.isEmpty()) {
             return TemplateResolution.error("Template '" + name + "' not found.");
         }
-        StringBuilder sb = new StringBuilder("Template '").append(name).append("' is ambiguous:");
-        for (Template m : matches) sb.append("\n  ").append(m.getName());
-        sb.append("\nUse the fully-qualified name or add a `using` statement.");
-        return TemplateResolution.error(sb.toString());
+        String ambiguous = "Template '" + name + "' is ambiguous:\n"
+                + matches.stream()
+                        .map(m -> "  " + m.getName())
+                        .collect(Collectors.joining("\n"))
+                + "\nUse the fully-qualified name or add a `using` statement.";
+        return TemplateResolution.error(ambiguous);
+    }
+
+    /** Last slash-separated segment of a path-like template name, or the whole string. */
+    private static String lastSegment(String pathLike) {
+        int slash = pathLike.lastIndexOf('/');
+        return slash >= 0 ? pathLike.substring(slash + 1) : pathLike;
     }
 
     /** Called by the visitor to append to the using-namespace list. */
@@ -698,9 +690,11 @@ public class CommandExecutor {
         // currently numeric. If booleans / strings / enums enter the language,
         // this needs to dispatch on the expected type (or substitute a token
         // that lexes validly in every position $var can appear).
-        Map<String, Double> placeholders = new HashMap<>();
-        Matcher m = VAR_PATTERN.matcher(line);
-        while (m.find()) placeholders.put(m.group().substring(1), 1.0);
+        Map<String, Double> placeholders = VAR_PATTERN.matcher(line).results()
+                .collect(Collectors.toMap(
+                        r -> r.group().substring(1),
+                        r -> 1.0,
+                        (a, b) -> a));
         return ExpressionEvaluator.substituteInLine(line, placeholders);
     }
 
@@ -712,12 +706,8 @@ public class CommandExecutor {
     private static boolean referenceResolvesAnywhere(String ref, TemplateRegistry registry) {
         if (ref.contains("/")) return registry.get(ref) != null;
         String lowered = ref.toLowerCase();
-        return registry.getAll().stream().anyMatch(t -> {
-            String regName = t.getName().toLowerCase();
-            int slash = regName.lastIndexOf('/');
-            String last = slash >= 0 ? regName.substring(slash + 1) : regName;
-            return last.equals(lowered);
-        });
+        return registry.getAll().stream()
+                .anyMatch(t -> lastSegment(t.getName().toLowerCase()).equals(lowered));
     }
 
     /**
@@ -766,21 +756,18 @@ public class CommandExecutor {
     }
 
     private void loadTemplatesFromTree(Path root, boolean isClasspath) {
-        // Collect first so we can sort for deterministic load order.
-        List<Path> files = new ArrayList<>();
+        List<Path> files;
         try (Stream<Path> stream = Files.walk(root)) {
-            stream.filter(Files::isRegularFile)
+            // Sort inside the try-with-resources so the stream is still open.
+            files = stream.filter(Files::isRegularFile)
                     .filter(p -> p.toString().endsWith(".cds"))
-                    .forEach(files::add);
+                    .sorted(Comparator.comparing(p -> root.relativize(p).toString()))
+                    .toList();
         } catch (IOException e) {
             recordLoaderMessage("Could not walk template root '" + root + "': " + e.getMessage());
             return;
         }
-        files.sort(Comparator.comparing(p -> root.relativize(p).toString()));
-
-        for (Path file : files) {
-            loadOneTemplateFile(root, file, isClasspath);
-        }
+        files.forEach(file -> loadOneTemplateFile(root, file, isClasspath));
     }
 
     private void loadOneTemplateFile(Path root, Path file, boolean isClasspath) {
@@ -805,23 +792,25 @@ public class CommandExecutor {
 
         // Snapshot the registry before the file runs so we can detect any
         // templates it registers and reject ones that don't match the filename.
-        Set<String> keysBefore = new HashSet<>();
-        for (Template t : registry.getAll()) keysBefore.add(t.getName().toLowerCase());
+        Set<String> keysBefore = registry.getAll().stream()
+                .map(t -> t.getName().toLowerCase())
+                .collect(Collectors.toSet());
 
         boolean prevSuppress = suppressUndo;
         String prevSource = currentLoadingSource;
         suppressUndo = true;
         currentLoadingSource = (isClasspath ? "classpath:" : "") + file.toString();
         try {
-            for (String line : lines) {
-                String trimmed = line.trim();
-                if (trimmed.isEmpty()) continue;
-                String result = execute(trimmed);
-                // Surface anything that looks like an error so bad files don't fail silently.
-                if (result != null && (result.startsWith("Parse error:") || result.startsWith("Error:"))) {
-                    recordLoaderMessage("Template '" + file + "': " + result.split("\n", 2)[0]);
-                }
-            }
+            lines.stream()
+                    .map(String::trim)
+                    .filter(trimmed -> !trimmed.isEmpty())
+                    .forEach(trimmed -> {
+                        String result = execute(trimmed);
+                        // Surface anything that looks like an error so bad files don't fail silently.
+                        if (result != null && (result.startsWith("Parse error:") || result.startsWith("Error:"))) {
+                            recordLoaderMessage("Template '" + file + "': " + result.split("\n", 2)[0]);
+                        }
+                    });
             // If the file left us in define-recording mode, bail out cleanly.
             if (definingTemplate) {
                 recordLoaderMessage("Template '" + file + "' did not end its define block.");
@@ -840,11 +829,10 @@ public class CommandExecutor {
         // Rule: exactly one template may be registered per file, and its name
         // must match the filename. Anything else is a contract violation — roll
         // it back so the misnamed template doesn't silently shadow real ones.
-        List<String> newlyRegistered = new ArrayList<>();
-        for (Template t : registry.getAll()) {
-            String key = t.getName().toLowerCase();
-            if (!keysBefore.contains(key)) newlyRegistered.add(t.getName());
-        }
+        List<String> newlyRegistered = registry.getAll().stream()
+                .map(Template::getName)
+                .filter(n -> !keysBefore.contains(n.toLowerCase()))
+                .toList();
 
         if (newlyRegistered.isEmpty()) {
             recordLoaderMessage("Template file '" + file
@@ -859,19 +847,16 @@ public class CommandExecutor {
             recordLoaderMessage("Template file '" + file + "' defines "
                     + quoteList(newlyRegistered) + " but the filename implies '"
                     + expectedName + "'. Rejecting misnamed template(s).");
-            for (String n : newlyRegistered) registry.unregister(n);
+            newlyRegistered.forEach(registry::unregister);
             return;
         }
 
         if (newlyRegistered.size() > 1) {
             // One matched; others are extras. Keep the match, reject the rest.
-            List<String> extras = new ArrayList<>();
-            for (String n : newlyRegistered) {
-                if (!n.toLowerCase().equals(expectedKey)) {
-                    extras.add(n);
-                    registry.unregister(n);
-                }
-            }
+            List<String> extras = newlyRegistered.stream()
+                    .filter(n -> !n.toLowerCase().equals(expectedKey))
+                    .toList();
+            extras.forEach(registry::unregister);
             recordLoaderMessage("Template file '" + file + "' defined extra template(s) "
                     + quoteList(extras) + " beyond the expected '" + expectedName
                     + "'. One template per file — extras rejected.");
@@ -879,12 +864,9 @@ public class CommandExecutor {
     }
 
     private static String quoteList(List<String> names) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < names.size(); i++) {
-            if (i > 0) sb.append(", ");
-            sb.append("'").append(names.get(i)).append("'");
-        }
-        return sb.toString();
+        return names.stream()
+                .map(n -> "'" + n + "'")
+                .collect(Collectors.joining(", "));
     }
 
     // ======================== Run / Script ========================
@@ -935,15 +917,13 @@ public class CommandExecutor {
         // Shebang identifier check: warn if the first non-empty line is a
         // shebang that doesn't mention "cadette". The line itself is still
         // processed normally — it's a comment to the lexer and gets skipped.
-        for (String line : lines) {
-            String trimmed = line.trim();
-            if (trimmed.isEmpty()) continue;
-            if (trimmed.startsWith("#!") && !trimmed.toLowerCase().contains("cadette")) {
-                output.append("  Warning: first-line shebang does not identify this as a ")
-                        .append("CADette script — expected '#! cadette'. Proceeding anyway.\n");
-            }
-            break;
-        }
+        lines.stream()
+                .map(String::trim)
+                .filter(l -> !l.isEmpty())
+                .findFirst()
+                .filter(first -> first.startsWith("#!") && !first.toLowerCase().contains("cadette"))
+                .ifPresent(first -> output.append("  Warning: first-line shebang does not identify this as a ")
+                        .append("CADette script — expected '#! cadette'. Proceeding anyway.\n"));
 
         // Collect all individual actions into a single composite undo action
         List<UndoableAction> previousCollecting = collectingActions;
@@ -999,6 +979,14 @@ public class CommandExecutor {
     }
 
     // ======================== Utilities ========================
+
+    /** Translate each part by {@code delta}; parts without a scene record are skipped. */
+    private void shiftParts(List<Part> parts, com.jme3.math.Vector3f delta) {
+        parts.forEach(part -> {
+            SceneManager.ObjectRecord rec = scene.getObjectRecord(part.getName());
+            if (rec != null) scene.moveObject(part.getName(), rec.position().add(delta));
+        });
+    }
 
     /** Compute rotation-aware AABB for a list of parts. */
     private com.jme3.math.Vector3f[] computeAssemblyAABB(List<Part> parts) {
