@@ -1255,9 +1255,9 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         }
 
         StringBuilder sb = new StringBuilder();
-        if (t.isBuiltIn()) {
-            sb.append("# Built-in template — copy and modify to customize.\n");
-            sb.append("# Re-running the define block will override the built-in.\n\n");
+        if (t.isStandard()) {
+            sb.append("# Standard template — copy and modify to customize.\n");
+            sb.append("# Drop an override into ~/.cadette/templates/ (filesystem beats classpath).\n\n");
         }
 
         // Build params string with aliases
@@ -1609,7 +1609,7 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
      * Template names are never prefixed with the current instance prefix — they're
      * registry lookups, not scene-local references.
      */
-    private static String templateRefText(CadetteCommandParser.TemplateRefContext ctx) {
+    static String templateRefText(CadetteCommandParser.TemplateRefContext ctx) {
         if (ctx.QUALIFIED_NAME() != null) return ctx.QUALIFIED_NAME().getText();
         if (ctx.STRING() != null) {
             String s = ctx.STRING().getText();

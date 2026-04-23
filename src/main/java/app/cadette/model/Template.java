@@ -38,23 +38,22 @@ public class Template {
     private final List<String> paramNames;          // canonical names in order
     private final Map<String, String> paramAliases;  // alias → canonical name
     private final List<String> bodyLines;
-    private final boolean builtIn;
     // Human-readable pointer to where this template came from, for `show templates`
     // and `which`. Conventions: "classpath:<path>" for bundled, the absolute path
     // for filesystem, "interactive" for REPL defines, null if unknown.
     private final String source;
 
     // Hand-coded: convenience ctor that delegates to the full form with
-    // no aliases, builtIn=false, and no source tag.
+    // no aliases and no source tag.
     public Template(String name, List<String> paramNames, List<String> bodyLines) {
-        this(name, paramNames, Map.of(), bodyLines, false, null);
+        this(name, paramNames, Map.of(), bodyLines, null);
     }
 
-    // Hand-coded: source-less 5-arg overload kept so existing tests that
+    // Hand-coded: source-less 4-arg overload kept so existing tests that
     // construct templates directly don't need to thread a source through.
     public Template(String name, List<String> paramNames, Map<String, String> paramAliases,
-                    List<String> bodyLines, boolean builtIn) {
-        this(name, paramNames, paramAliases, bodyLines, builtIn, null);
+                    List<String> bodyLines) {
+        this(name, paramNames, paramAliases, bodyLines, null);
     }
 
     // Hand-coded: defensive List.copyOf / Map.copyOf so template bodies and
@@ -62,12 +61,11 @@ public class Template {
     // @RequiredArgsConstructor / @AllArgsConstructor would store the caller's
     // references directly.
     public Template(String name, List<String> paramNames, Map<String, String> paramAliases,
-                    List<String> bodyLines, boolean builtIn, String source) {
+                    List<String> bodyLines, String source) {
         this.name = name;
         this.paramNames = List.copyOf(paramNames);
         this.paramAliases = Map.copyOf(paramAliases);
         this.bodyLines = List.copyOf(bodyLines);
-        this.builtIn = builtIn;
         this.source = source;
     }
 
@@ -76,5 +74,10 @@ public class Template {
         String lower = nameOrAlias.toLowerCase();
         if (paramNames.contains(lower)) return lower;
         return paramAliases.get(lower);
+    }
+
+    /** Templates under the reserved "standard/" namespace ship with the app. */
+    public boolean isStandard() {
+        return name.startsWith("standard/");
     }
 }

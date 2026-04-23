@@ -142,6 +142,15 @@ public class CadetteApp {
         // (setDividerLocation with proportional values requires a non-zero width)
         view.applyLayout().run();
 
+        // Surface any diagnostics from template loading (override warnings,
+        // parse errors, rejected files). They already went to stderr at load
+        // time; repeating them in the command panel gives GUI-only users a
+        // chance to notice.
+        List<String> loaderMessages = executor.drainLoaderMessages();
+        for (String msg : loaderMessages) {
+            commandPanel.appendOutput("[template loader] " + msg + "\n");
+        }
+
         // Run startup script if it exists (~/.cadette/startup.cds)
         String startupResult = executor.runStartupScript();
         if (startupResult != null) {
@@ -176,14 +185,20 @@ public class CadetteApp {
 
     /** Chooser for the `run` command when invoked with no path argument. */
     private static Supplier<Path> scriptOpenChooser(JFrame frame) {
+        // Starts in the app's launch directory; thereafter remembers the
+        // directory of the last opened script so repeated runs don't force
+        // the user to re-navigate.
+        File[] lastDir = { new File(System.getProperty("user.dir")) };
         return () -> {
-            JFileChooser chooser = new JFileChooser();
+            JFileChooser chooser = new JFileChooser(lastDir[0]);
             chooser.setDialogTitle("Open CADette Script");
             chooser.setFileFilter(new FileNameExtensionFilter("CADette Scripts (*.cds)", "cds"));
             int result = chooser.showOpenDialog(frame);
-            return result == JFileChooser.APPROVE_OPTION
-                    ? chooser.getSelectedFile().toPath()
-                    : null;
+            if (result != JFileChooser.APPROVE_OPTION) return null;
+            File selected = chooser.getSelectedFile();
+            File parent = selected.getParentFile();
+            if (parent != null) lastDir[0] = parent;
+            return selected.toPath();
         };
     }
 

@@ -39,6 +39,8 @@ import java.util.*;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
@@ -269,7 +271,7 @@ public class CommandExecutor {
     private String finishDefine() {
         String src = currentLoadingSource != null ? currentLoadingSource : "interactive";
         Template template = new Template(definingTemplateName, definingParamNames,
-                definingParamAliases, definingBodyLines, false, src);
+                definingParamAliases, definingBodyLines, src);
         TemplateRegistry.instance().register(template);
 
         String msg = "Template '" + definingTemplateName + "' defined ("
@@ -576,6 +578,26 @@ public class CommandExecutor {
     // ======================== Template Loading ========================
 
     /**
+     * Collected loader diagnostics (override warnings, parse errors, rejected
+     * files, etc.). Populated as side-effects of template loading so the UI
+     * can surface them after startup. Also echoed to stderr for CLI / test use.
+     */
+    private final List<String> loaderMessages = new ArrayList<>();
+
+    /** Append a loader diagnostic: collected for the UI, echoed to stderr. */
+    private void recordLoaderMessage(String msg) {
+        loaderMessages.add(msg);
+        System.err.println(msg);
+    }
+
+    /** Return and clear accumulated loader diagnostics. The UI drains these at startup. */
+    public List<String> drainLoaderMessages() {
+        List<String> out = List.copyOf(loaderMessages);
+        loaderMessages.clear();
+        return out;
+    }
+
+    /**
      * Load all templates from classpath ({@code resources/templates/}) and from
      * {@code ~/.cadette/templates/}. Filesystem templates override classpath
      * entries of the same name, with a warning. Called once at application startup.
@@ -586,6 +608,116 @@ public class CommandExecutor {
         if (Files.isDirectory(fsRoot)) {
             loadTemplatesFromFilesystem(fsRoot);
         }
+        validateTemplateReferences();
+    }
+
+    // Matches a $variable reference in a body line.
+    private static final Pattern VAR_PATTERN = Pattern.compile("\\$[a-zA-Z_][a-zA-Z0-9_]*");
+
+    /**
+     * After loading, walk every template body with the command grammar and
+     * surface two classes of problem:
+     *   1. Syntax errors in body lines.
+     *   2. References to templates that exist nowhere in the registry.
+     *
+     * Body lines can contain {@code $var} substitutions that aren't valid
+     * grammar tokens as-stored; we replace them with 1.0 via the normal
+     * expression evaluator so arithmetic folds down to concrete numbers
+     * before parsing. On lines that had variables, we suppress syntax errors
+     * because a parse failure might be a substitution artifact rather than a
+     * real bug — those lines get parsed for real at instantiation time.
+     *
+     * Reference resolution checks the whole registry (no {@code using}
+     * context); we only flag references that have zero possible matches —
+     * ambiguity is a runtime concern the user disambiguates with {@code using}.
+     */
+    public void validateTemplateReferences() {
+        TemplateRegistry registry = TemplateRegistry.instance();
+        for (Template t : registry.getAll()) {
+            List<String> body = t.getBodyLines();
+            for (int i = 0; i < body.size(); i++) {
+                validateBodyLine(t, i + 1, body.get(i), registry);
+            }
+        }
+    }
+
+    private void validateBodyLine(Template owner, int lineNum, String rawLine,
+                                  TemplateRegistry registry) {
+        String line = rawLine.trim();
+        if (line.isEmpty()) return;
+
+        boolean hasVars = VAR_PATTERN.matcher(line).find();
+        String prepared = hasVars ? substituteVarsWithPlaceholders(line) : line;
+
+        StringBuilder syntaxErrors = new StringBuilder();
+        CadetteCommandLexer lexer = new CadetteCommandLexer(CharStreams.fromString(prepared));
+        lexer.removeErrorListeners();
+        CommonTokenStream tokens = new CommonTokenStream(lexer);
+        CadetteCommandParser parser = new CadetteCommandParser(tokens);
+        parser.removeErrorListeners();
+        parser.addErrorListener(new BaseErrorListener() {
+            @Override
+            public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol,
+                                    int ln, int charPos, String msg, RecognitionException e) {
+                if (!syntaxErrors.isEmpty()) syntaxErrors.append("; ");
+                syntaxErrors.append(msg);
+            }
+        });
+
+        CadetteCommandParser.InputContext inputCtx;
+        try {
+            inputCtx = parser.input();
+        } catch (Exception e) {
+            if (!hasVars) {
+                recordLoaderMessage(locate(owner, lineNum) + ": syntax error — " + e.getMessage());
+            }
+            return;
+        }
+
+        if (!syntaxErrors.isEmpty()) {
+            if (!hasVars) {
+                recordLoaderMessage(locate(owner, lineNum) + ": syntax error — " + syntaxErrors);
+            }
+            return;
+        }
+
+        if (inputCtx.command() == null) return;
+        CadetteCommandParser.CreateTemplateCommandContext createTpl =
+                inputCtx.command().createTemplateCommand();
+        if (createTpl == null) return;
+
+        String ref = CommandVisitor.templateRefText(createTpl.templateRef());
+        if (!referenceResolvesAnywhere(ref, registry)) {
+            recordLoaderMessage(locate(owner, lineNum)
+                    + ": references unknown template '" + ref + "'.");
+        }
+    }
+
+    private static String substituteVarsWithPlaceholders(String line) {
+        // 1.0 works as a universal placeholder because all template vars are
+        // currently numeric. If booleans / strings / enums enter the language,
+        // this needs to dispatch on the expected type (or substitute a token
+        // that lexes validly in every position $var can appear).
+        Map<String, Double> placeholders = new HashMap<>();
+        Matcher m = VAR_PATTERN.matcher(line);
+        while (m.find()) placeholders.put(m.group().substring(1), 1.0);
+        return ExpressionEvaluator.substituteInLine(line, placeholders);
+    }
+
+    private static String locate(Template owner, int lineNum) {
+        String src = owner.getSource() != null ? " (from " + owner.getSource() + ")" : "";
+        return "Template '" + owner.getName() + "' body line " + lineNum + src;
+    }
+
+    private static boolean referenceResolvesAnywhere(String ref, TemplateRegistry registry) {
+        if (ref.contains("/")) return registry.get(ref) != null;
+        String lowered = ref.toLowerCase();
+        return registry.getAll().stream().anyMatch(t -> {
+            String regName = t.getName().toLowerCase();
+            int slash = regName.lastIndexOf('/');
+            String last = slash >= 0 ? regName.substring(slash + 1) : regName;
+            return last.equals(lowered);
+        });
     }
 
     /**
@@ -604,14 +736,14 @@ public class CommandExecutor {
         try {
             uri = rootUrl.toURI();
         } catch (Exception e) {
-            System.err.println("Could not locate bundled templates: " + e.getMessage());
+            recordLoaderMessage("Could not locate bundled templates: " + e.getMessage());
             return;
         }
         if ("jar".equals(uri.getScheme())) {
             try (FileSystem fs = FileSystems.newFileSystem(uri, Map.of())) {
                 loadTemplatesFromTree(fs.getPath("/templates"), /*isClasspath=*/true);
             } catch (IOException e) {
-                System.err.println("Could not open bundled templates jar: " + e.getMessage());
+                recordLoaderMessage("Could not open bundled templates jar: " + e.getMessage());
             }
         } else {
             loadTemplatesFromTree(Path.of(uri), /*isClasspath=*/true);
@@ -641,7 +773,7 @@ public class CommandExecutor {
                     .filter(p -> p.toString().endsWith(".cds"))
                     .forEach(files::add);
         } catch (IOException e) {
-            System.err.println("Could not walk template root '" + root + "': " + e.getMessage());
+            recordLoaderMessage("Could not walk template root '" + root + "': " + e.getMessage());
             return;
         }
         files.sort(Comparator.comparing(p -> root.relativize(p).toString()));
@@ -659,7 +791,7 @@ public class CommandExecutor {
         TemplateRegistry registry = TemplateRegistry.instance();
         Template existing = registry.get(expectedName);
         if (existing != null && !isClasspath) {
-            System.err.println("Filesystem template '" + file + "' overrides classpath template '"
+            recordLoaderMessage("Filesystem template '" + file + "' overrides classpath template '"
                     + expectedName + "'.");
         }
 
@@ -667,7 +799,7 @@ public class CommandExecutor {
         try {
             lines = Files.readAllLines(file);
         } catch (IOException e) {
-            System.err.println("Could not read template '" + file + "': " + e.getMessage());
+            recordLoaderMessage("Could not read template '" + file + "': " + e.getMessage());
             return;
         }
 
@@ -687,12 +819,12 @@ public class CommandExecutor {
                 String result = execute(trimmed);
                 // Surface anything that looks like an error so bad files don't fail silently.
                 if (result != null && (result.startsWith("Parse error:") || result.startsWith("Error:"))) {
-                    System.err.println("Template '" + file + "': " + result.split("\n", 2)[0]);
+                    recordLoaderMessage("Template '" + file + "': " + result.split("\n", 2)[0]);
                 }
             }
             // If the file left us in define-recording mode, bail out cleanly.
             if (definingTemplate) {
-                System.err.println("Template '" + file + "' did not end its define block.");
+                recordLoaderMessage("Template '" + file + "' did not end its define block.");
                 definingTemplate = false;
                 definingTemplateName = null;
                 definingParamNames = null;
@@ -715,7 +847,7 @@ public class CommandExecutor {
         }
 
         if (newlyRegistered.isEmpty()) {
-            System.err.println("Template file '" + file
+            recordLoaderMessage("Template file '" + file
                     + "' did not define any template.");
             return;
         }
@@ -724,7 +856,7 @@ public class CommandExecutor {
                 .anyMatch(n -> n.toLowerCase().equals(expectedKey));
 
         if (!expectedPresent) {
-            System.err.println("Template file '" + file + "' defines "
+            recordLoaderMessage("Template file '" + file + "' defines "
                     + quoteList(newlyRegistered) + " but the filename implies '"
                     + expectedName + "'. Rejecting misnamed template(s).");
             for (String n : newlyRegistered) registry.unregister(n);
@@ -740,7 +872,7 @@ public class CommandExecutor {
                     registry.unregister(n);
                 }
             }
-            System.err.println("Template file '" + file + "' defined extra template(s) "
+            recordLoaderMessage("Template file '" + file + "' defined extra template(s) "
                     + quoteList(extras) + " beyond the expected '" + expectedName
                     + "'. One template per file — extras rejected.");
         }

@@ -36,7 +36,7 @@ class TemplateRegistryTest {
 
     private static Template template(String name) {
         return new Template(name, List.of("width"), Map.of(),
-                List.of("create part \"x\" size $width, 1 at 0, 0, 0"), false);
+                List.of("create part \"x\" size $width, 1 at 0, 0, 0"));
     }
 
     @Test

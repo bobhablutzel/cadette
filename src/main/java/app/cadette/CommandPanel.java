@@ -192,6 +192,11 @@ public class CommandPanel extends JPanel {
 
     public void appendOutput(String text) {
         outputArea.append(text);
+        // Scroll to the latest line — but only if the user isn't mid-selection,
+        // since moving the caret would wipe an in-progress copy.
+        if (outputArea.getSelectionStart() == outputArea.getSelectionEnd()) {
+            outputArea.setCaretPosition(outputArea.getDocument().getLength());
+        }
     }
 
     private void loadHistory() {
