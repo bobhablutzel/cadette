@@ -72,112 +72,93 @@ public class CutListGenerator {
      */
     public static List<CutListEntry> generateCutList(
             Map<String, Part> parts, JointRegistry joints) {
+        return parts.values().stream()
+                .map(part -> new CutListEntry(
+                        part.getName(),
+                        part.getMaterial(),
+                        part.getCutWidthMm(),
+                        part.getCutHeightMm(),
+                        part.getThicknessMm(),
+                        part.getGrainRequirement(),
+                        operationsFor(part, joints)))
+                .sorted(Comparator
+                        .comparing((CutListEntry e) -> e.getMaterial().getName())
+                        .thenComparing(CutListEntry::getPartName))
+                .toList();
+    }
 
-        List<CutListEntry> entries = new ArrayList<>();
+    /** Machining operations applied to a part (only when it's the receiving side of a joint). */
+    private static List<String> operationsFor(Part part, JointRegistry joints) {
+        return joints.getJointsForPart(part.getName()).stream()
+                .filter(j -> j.getReceivingPartName().equals(part.getName()))
+                .map(CutListGenerator::describeOperation)
+                .flatMap(Optional::stream)
+                .toList();
+    }
 
-        for (Part part : parts.values()) {
-            // Collect machining operations for this part (as the receiving part)
-            List<String> operations = new ArrayList<>();
-            for (Joint j : joints.getJointsForPart(part.getName())) {
-                if (j.getReceivingPartName().equals(part.getName())) {
-                    switch (j.getType()) {
-                        case DADO -> operations.add(String.format(
-                                "dado %.1fmm deep for \"%s\"", j.getDepthMm(), j.getInsertedPartName()));
-                        case RABBET -> operations.add(String.format(
-                                "rabbet %.1fmm deep for \"%s\"", j.getDepthMm(), j.getInsertedPartName()));
-                        case POCKET_SCREW -> {
-                            if (j.getScrewCount() > 0) {
-                                operations.add(String.format(
-                                        "%d pocket screw hole(s) for \"%s\"", j.getScrewCount(), j.getInsertedPartName()));
-                            }
-                        }
-                        default -> {} // butt — no operation
-                    }
-                }
-            }
-
-            entries.add(new CutListEntry(
-                    part.getName(),
-                    part.getMaterial(),
-                    part.getCutWidthMm(),
-                    part.getCutHeightMm(),
-                    part.getThicknessMm(),
-                    part.getGrainRequirement(),
-                    operations));
-        }
-
-        // Sort: group by material name, then by part name
-        entries.sort(Comparator
-                .comparing((CutListEntry e) -> e.getMaterial().getName())
-                .thenComparing(CutListEntry::getPartName));
-
-        return entries;
+    private static Optional<String> describeOperation(Joint j) {
+        return switch (j.getType()) {
+            case DADO -> Optional.of(String.format(
+                    "dado %.1fmm deep for \"%s\"", j.getDepthMm(), j.getInsertedPartName()));
+            case RABBET -> Optional.of(String.format(
+                    "rabbet %.1fmm deep for \"%s\"", j.getDepthMm(), j.getInsertedPartName()));
+            case POCKET_SCREW -> j.getScrewCount() > 0
+                    ? Optional.of(String.format("%d pocket screw hole(s) for \"%s\"",
+                            j.getScrewCount(), j.getInsertedPartName()))
+                    : Optional.empty();
+            default -> Optional.empty();  // butt — no machining
+        };
     }
 
     /**
      * Generate the BOM using actual sheet layout results from the packer.
      */
     public static List<BomEntry> generateBom(Map<String, Part> parts, List<SheetLayout> layouts) {
-        // Group parts by material
         Map<String, List<Part>> byMaterial = parts.values().stream()
                 .collect(Collectors.groupingBy(
                         p -> p.getMaterial().getName(),
                         LinkedHashMap::new,
                         Collectors.toList()));
 
-        // Index layouts by material name
-        Map<String, List<SheetLayout>> layoutsByMaterial = new LinkedHashMap<>();
-        for (SheetLayout layout : layouts) {
-            layoutsByMaterial.computeIfAbsent(layout.getMaterial().getName(), k -> new ArrayList<>())
-                    .add(layout);
-        }
+        Map<String, List<SheetLayout>> layoutsByMaterial = layouts.stream()
+                .collect(Collectors.groupingBy(
+                        l -> l.getMaterial().getName(),
+                        LinkedHashMap::new,
+                        Collectors.toList()));
 
-        List<BomEntry> entries = new ArrayList<>();
-        for (var entry : byMaterial.entrySet()) {
-            List<Part> materialParts = entry.getValue();
-            Material mat = materialParts.get(0).getMaterial();
+        return byMaterial.values().stream()
+                .map(materialParts -> toBomEntry(materialParts,
+                        layoutsByMaterial.get(materialParts.get(0).getMaterial().getName())))
+                .toList();
+    }
 
-            float totalArea = 0;
-            for (Part p : materialParts) {
-                totalArea += p.getCutWidthMm() * p.getCutHeightMm();
-            }
-
-            List<SheetLayout> matLayouts = layoutsByMaterial.get(mat.getName());
-            Integer sheetCount = null;
-            Float offcutPercent = null;
-            if (matLayouts != null && !matLayouts.isEmpty()) {
-                sheetCount = matLayouts.size();
-                float totalOffcut = 0;
-                for (SheetLayout sl : matLayouts) {
-                    totalOffcut += sl.getOffcutPercent();
-                }
-                offcutPercent = totalOffcut / matLayouts.size();
-            }
-
-            entries.add(new BomEntry(mat, materialParts.size(), totalArea, sheetCount, offcutPercent));
-        }
-
-        return entries;
+    private static BomEntry toBomEntry(List<Part> materialParts, List<SheetLayout> matLayouts) {
+        Material mat = materialParts.get(0).getMaterial();
+        float totalArea = (float) materialParts.stream()
+                .mapToDouble(p -> p.getCutWidthMm() * p.getCutHeightMm())
+                .sum();
+        boolean haveLayouts = matLayouts != null && !matLayouts.isEmpty();
+        Integer sheetCount = haveLayouts ? matLayouts.size() : null;
+        Float offcutPercent = haveLayouts
+                ? (float) matLayouts.stream()
+                        .mapToDouble(SheetLayout::getOffcutPercent)
+                        .average()
+                        .orElse(0)
+                : null;
+        return new BomEntry(mat, materialParts.size(), totalArea, sheetCount, offcutPercent);
     }
 
     /**
      * Generate fastener summary from joints.
      */
     public static List<FastenerEntry> generateFasteners(JointRegistry joints) {
-        List<FastenerEntry> entries = new ArrayList<>();
-
-        int totalPocketScrews = 0;
-        for (Joint j : joints.getAllJoints()) {
-            if (j.getType() == JointType.POCKET_SCREW && j.getScrewCount() > 0) {
-                totalPocketScrews += j.getScrewCount();
-            }
-        }
-        if (totalPocketScrews > 0) {
-            entries.add(new FastenerEntry("Pocket screws", totalPocketScrews));
-        }
-
+        int totalPocketScrews = joints.getAllJoints().stream()
+                .filter(j -> j.getType() == JointType.POCKET_SCREW)
+                .mapToInt(Joint::getScrewCount)
+                .sum();
+        return totalPocketScrews > 0
+                ? List.of(new FastenerEntry("Pocket screws", totalPocketScrews))
+                : List.of();
         // Future: biscuits, dowels, etc.
-
-        return entries;
     }
 }
