@@ -91,6 +91,14 @@ DEFINE     : 'define' ;
 PARAMS     : 'params' | 'param' ;
 USING      : 'using' ;
 NONE       : 'none' ;
+// Control-flow keywords used inside template bodies (if/for blocks).
+// END is also used by the legacy `end define` terminator, but that one is
+// handled by a pre-parse string intercept in CommandExecutor, not grammar.
+IF         : 'if' ;
+THEN       : 'then' ;
+ELSE       : 'else' ;
+END        : 'end' ;
+FOR        : 'for' ;
 WHICH      : 'which' ;
 STATS      : 'stats' ;
 RUN        : 'run' -> pushMode(PATH_MODE) ;
@@ -111,6 +119,8 @@ GT         : '>' ;
 AND        : '&&' ;
 OR         : '||' ;
 NOT        : '!' ;
+// Single-equals assignment, used by `for $i = 1 to N`. Distinct from EQ ('==').
+ASSIGN     : '=' ;
 MIN        : 'min' ;
 MAX        : 'max' ;
 AT         : 'at' | '@' ;

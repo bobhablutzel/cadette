@@ -178,11 +178,10 @@ class TemplateValidationTest extends HeadlessTestBase {
     }
 
     @Test
-    void syntaxErrorInBodyLineIsReported() throws IOException {
-        // Body lines aren't parsed at define time — the loader just records
-        // them. The validator is the first place a malformed line gets seen
-        // (without waiting for instantiation). No $vars on the bad line, so
-        // we know the parser sees a real syntax problem.
+    void syntaxErrorInBodyLineRejectsTemplateAtDefineTime() throws IOException {
+        // Bodies are parsed as one unit at `end define`. A malformed line
+        // rejects the whole template — it never registers, and the error
+        // surfaces via the loader's error channel.
         Path root = writeTree(
                 "acme/syntactically_broken.cds",
                 """
@@ -193,21 +192,19 @@ class TemplateValidationTest extends HeadlessTestBase {
                 """);
 
         executor.loadTemplatesFromDirectory(root);
-        executor.drainLoaderMessages();
-        executor.validateTemplateReferences();
-        List<String> warnings = executor.drainLoaderMessages();
+        List<String> loadMessages = executor.drainLoaderMessages();
 
-        assertTrue(warnings.stream().anyMatch(w ->
-                        w.contains("syntax error") && w.contains("acme/syntactically_broken")),
-                "validator should surface the body-line syntax error at load time, got: " + warnings);
+        assertTrue(loadMessages.stream().anyMatch(m ->
+                        m.contains("acme/syntactically_broken") && m.contains("body parse error")),
+                "define-time parse error should surface through the loader: " + loadMessages);
+        assertNull(TemplateRegistry.instance().get("acme/syntactically_broken"),
+                "broken template must not register");
     }
 
     @Test
-    void variableInTemplateRefPositionIsRejected() throws IOException {
-        // `create $dynamic Sub` isn't allowed — templateRef accepts bare names,
-        // qualified names, or quoted strings, not variable substitutions.
-        // Under the old text-substitution regime this was silently accepted
-        // but never actually used; the grammar now surfaces the constraint.
+    void variableInTemplateRefPositionIsRejectedAtDefineTime() throws IOException {
+        // templateRef accepts bare names, qualified names, or quoted strings —
+        // not variable substitutions. Caught by the grammar at body parse time.
         Path root = writeTree(
                 "acme/dynamic_ref.cds",
                 """
@@ -218,12 +215,12 @@ class TemplateValidationTest extends HeadlessTestBase {
                 """);
 
         executor.loadTemplatesFromDirectory(root);
-        executor.drainLoaderMessages();
-        executor.validateTemplateReferences();
-        List<String> warnings = executor.drainLoaderMessages();
+        List<String> loadMessages = executor.drainLoaderMessages();
 
-        assertTrue(warnings.stream().anyMatch(w ->
-                        w.contains("syntax error") && w.contains("acme/dynamic_ref")),
-                "$var in template-ref position should produce a syntax error: " + warnings);
+        assertTrue(loadMessages.stream().anyMatch(m ->
+                        m.contains("acme/dynamic_ref") && m.contains("body parse error")),
+                "$var in template-ref position should reject the template: " + loadMessages);
+        assertNull(TemplateRegistry.instance().get("acme/dynamic_ref"),
+                "rejected template must not register");
     }
 }

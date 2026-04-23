@@ -130,7 +130,7 @@ public class CommandExecutor {
     private List<String> usingNamespaces = new ArrayList<>();
     // Set by visitor's visitCreatePartCommand after each part create, consumed by
     // instantiateTemplate to collect the parts belonging to the new assembly.
-    @Setter(AccessLevel.PACKAGE) private String lastCreatedPartName = null;
+    @Getter(AccessLevel.PACKAGE) @Setter(AccessLevel.PACKAGE) private String lastCreatedPartName = null;
 
     public CommandExecutor(SceneManager scene) {
         this.scene = scene;
@@ -297,21 +297,57 @@ public class CommandExecutor {
 
     private String finishDefine() {
         String src = currentLoadingSource != null ? currentLoadingSource : "interactive";
-        Template template = new Template(definingTemplateName, definingParamNames,
-                definingParamAliases, definingBodyLines, src);
-        TemplateRegistry.instance().register(template);
 
-        String msg = "Template '" + definingTemplateName + "' defined ("
-                + definingBodyLines.size() + " lines, "
-                + definingParamNames.size() + " params).";
-
+        // Snapshot define state now so we can clear it up front regardless of
+        // parse outcome — that way an error won't leave us stuck in define mode.
+        String name = definingTemplateName;
+        List<String> paramNames = definingParamNames;
+        Map<String, String> paramAliases = definingParamAliases;
+        List<String> bodyLines = List.copyOf(definingBodyLines);
         definingTemplate = false;
         definingTemplateName = null;
         definingParamNames = null;
         definingParamAliases = null;
         definingBodyLines = null;
 
-        return msg;
+        CadetteCommandParser.TemplateBodyContext parsedBody;
+        StringBuilder parseErrors = new StringBuilder();
+        try {
+            parsedBody = parseTemplateBody(bodyLines, parseErrors);
+        } catch (Exception e) {
+            return "Error: template '" + name + "' rejected — body parse error:" + e.getMessage();
+        }
+        if (!parseErrors.isEmpty()) {
+            return "Error: template '" + name + "' rejected — body parse error:" + parseErrors;
+        }
+
+        Template template = new Template(name, paramNames, paramAliases,
+                bodyLines, parsedBody, src);
+        TemplateRegistry.instance().register(template);
+
+        return "Template '" + name + "' defined ("
+                + bodyLines.size() + " lines, "
+                + paramNames.size() + " params).";
+    }
+
+    /** Parse a multi-line body as a single templateBody unit. */
+    private static CadetteCommandParser.TemplateBodyContext parseTemplateBody(
+            List<String> bodyLines, StringBuilder errorsOut) {
+        String bodyText = String.join("\n", bodyLines);
+        CadetteCommandLexer lexer = new CadetteCommandLexer(CharStreams.fromString(bodyText));
+        lexer.removeErrorListeners();
+        CommonTokenStream tokens = new CommonTokenStream(lexer);
+        CadetteCommandParser parser = new CadetteCommandParser(tokens);
+        parser.removeErrorListeners();
+        parser.addErrorListener(new BaseErrorListener() {
+            @Override
+            public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol,
+                                    int line, int charPos, String msg, RecognitionException e) {
+                if (!errorsOut.isEmpty()) errorsOut.append("; ");
+                errorsOut.append("body line ").append(line).append(": ").append(msg);
+            }
+        });
+        return parser.templateBody();
     }
 
     // ======================== Template Instantiation ========================
@@ -372,24 +408,13 @@ public class CommandExecutor {
         currentInstancePrefix = instanceName;
         pushVarScope(vars);
         try {
-            for (String bodyLine : template.getBodyLines()) {
-                if (bodyLine.trim().isEmpty()) continue;
-
-                lastCreatedPartName = null;
-                // Body line is parsed fresh; VAR_REF nodes resolve against the
-                // active scope (this instantiation's vars). No text-level
-                // substitution anymore — expressions live in the grammar.
-                String result = execute(bodyLine);
-                if (result.isEmpty()) continue;  // comment line
-                output.append("  ").append(result).append("\n");
-
-                if (lastCreatedPartName != null) {
-                    Part part = scene.getPart(lastCreatedPartName);
-                    if (part != null) {
-                        assembly.addPart(part);
-                        createdParts.add(part);
-                    }
-                }
+            // Tree-walking instantiation: the body parsed once at define time;
+            // each instantiation walks the tree with the active scope stack.
+            // Loop iterations and if-branches push/pop their own scopes on top.
+            CadetteCommandParser.TemplateBodyContext parsed = template.getParsedBody();
+            if (parsed != null) {
+                CommandVisitor visitor = new CommandVisitor(this, scene);
+                visitor.instantiateTemplateBody(parsed, assembly, createdParts, output);
             }
         } finally {
             popVarScope();

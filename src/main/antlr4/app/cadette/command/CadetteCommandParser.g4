@@ -28,6 +28,35 @@ input
     : command? EOF
     ;
 
+// Separate entry point used when a template body is parsed as a single unit
+// (after `end define` collects its stored lines). A body is a sequence of
+// commands and nested control-flow blocks. Loops and conditionals are
+// first-class grammar productions rather than string-matched directives.
+templateBody
+    : templateStatement* EOF
+    ;
+
+templateStatement
+    : ifBlock
+    | forBlock
+    | command
+    ;
+
+ifBlock
+    : IF expression THEN thenBody+=templateStatement*
+      (ELSE elseBody+=templateStatement*)?
+      END IF
+    ;
+
+// `for $i = 1 to $n ... end for`. Both bounds inclusive. The loop variable
+// is VAR_REF syntactically (matching how it's used — `$i`) and scoped to
+// the body via the executor's scope stack.
+forBlock
+    : FOR VAR_REF ASSIGN expression TO expression
+      templateStatement*
+      END FOR
+    ;
+
 command
     : createCommand
     | createPartCommand

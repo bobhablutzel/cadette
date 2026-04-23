@@ -1583,6 +1583,84 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         return "";
     }
 
+    // -- Template body instantiation --
+
+    /**
+     * Walk a template's parsed body, collecting created parts into the given
+     * assembly and appending each statement's output. Supports nested if/for
+     * blocks; loop variables are pushed onto the executor's scope stack.
+     */
+    public void instantiateTemplateBody(CadetteCommandParser.TemplateBodyContext body,
+                                        Assembly assembly,
+                                        List<Part> createdParts,
+                                        StringBuilder output) {
+        for (var stmt : body.templateStatement()) {
+            executeTemplateStatement(stmt, assembly, createdParts, output);
+        }
+    }
+
+    private void executeTemplateStatement(CadetteCommandParser.TemplateStatementContext stmt,
+                                          Assembly assembly,
+                                          List<Part> createdParts,
+                                          StringBuilder output) {
+        if (stmt.ifBlock() != null) {
+            executeIfBlock(stmt.ifBlock(), assembly, createdParts, output);
+        } else if (stmt.forBlock() != null) {
+            executeForBlock(stmt.forBlock(), assembly, createdParts, output);
+        } else if (stmt.command() != null) {
+            executor.setLastCreatedPartName(null);
+            String result = visit(stmt.command());
+            if (result != null && !result.isEmpty()) {
+                output.append("  ").append(result).append("\n");
+            }
+            String created = executor.getLastCreatedPartName();
+            if (created != null) {
+                Part part = scene.getPart(created);
+                if (part != null) {
+                    assembly.addPart(part);
+                    createdParts.add(part);
+                }
+            }
+        }
+    }
+
+    private void executeIfBlock(CadetteCommandParser.IfBlockContext ctx,
+                                Assembly assembly,
+                                List<Part> createdParts,
+                                StringBuilder output) {
+        double cond = evaluateExpression(ctx.expression());
+        List<CadetteCommandParser.TemplateStatementContext> branch =
+                cond != 0 ? ctx.thenBody : ctx.elseBody;
+        if (branch == null) return;
+        for (var s : branch) {
+            executeTemplateStatement(s, assembly, createdParts, output);
+        }
+    }
+
+    private void executeForBlock(CadetteCommandParser.ForBlockContext ctx,
+                                 Assembly assembly,
+                                 List<Part> createdParts,
+                                 StringBuilder output) {
+        String varName = ctx.VAR_REF().getText().substring(1);  // strip $
+        long from = (long) evaluateExpression(ctx.expression(0));
+        long to = (long) evaluateExpression(ctx.expression(1));
+        // Loop variable shadows any outer scope. `for i in 5..3` runs zero times
+        // (no implicit reverse — users can say so explicitly when we add `step`).
+        Map<String, Double> loopScope = new LinkedHashMap<>();
+        loopScope.put(varName, (double) from);
+        executor.pushVarScope(loopScope);
+        try {
+            for (long i = from; i <= to; i++) {
+                executor.setInCurrentScope(varName, (double) i);
+                for (var s : ctx.templateStatement()) {
+                    executeTemplateStatement(s, assembly, createdParts, output);
+                }
+            }
+        } finally {
+            executor.popVarScope();
+        }
+    }
+
     // -- Expression evaluation --
 
     /**
@@ -1680,36 +1758,66 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         return new Vector3f(d, d, d);
     }
 
-    private static String extractMaterialName(CadetteCommandParser.MaterialNameContext ctx) {
-        if (ctx.STRING() != null) {
-            String s = ctx.STRING().getText();
-            if (s.length() >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
-                return s.substring(1, s.length() - 1);
-            }
-            return s;
-        }
-        return ctx.nameLike().getText();
+    private String extractMaterialName(CadetteCommandParser.MaterialNameContext ctx) {
+        return interpolateString(stripStringQuotes(
+                ctx.STRING() != null ? ctx.STRING().getText() : ctx.nameLike().getText()));
     }
 
     /**
      * Extract an object name, applying the current template-instance prefix if set.
      * E.g. during expansion of template instance "K", a body line's "left-side" returns "K/left-side".
+     * String literals with {@code $var} / {@code ${var}} references are interpolated
+     * against the active scope — needed for dynamic part names inside for-loops
+     * (e.g. {@code create part "shelf_$i" ...}).
      */
     private String extractName(CadetteCommandParser.ObjectNameContext ctx) {
-        String raw = rawObjectName(ctx);
+        String raw = interpolateString(rawObjectName(ctx));
         String prefix = executor.getCurrentInstancePrefix();
         return prefix != null ? prefix + "/" + raw : raw;
     }
 
     private static String rawObjectName(CadetteCommandParser.ObjectNameContext ctx) {
-        if (ctx.STRING() != null) {
-            String s = ctx.STRING().getText();
-            if (s.length() >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
-                return s.substring(1, s.length() - 1);
-            }
-            return s;
+        return stripStringQuotes(
+                ctx.STRING() != null ? ctx.STRING().getText() : ctx.nameLike().getText());
+    }
+
+    private static String stripStringQuotes(String s) {
+        if (s.length() >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
+            return s.substring(1, s.length() - 1);
         }
-        return ctx.nameLike().getText();
+        return s;
+    }
+
+    // Matches $name or ${name} inside a string literal. Names follow the
+    // same rule as the lexer's VAR_REF: letter/underscore start, alphanumeric
+    // rest. The two capture groups let `${name}` work without eating a
+    // trailing word boundary.
+    private static final java.util.regex.Pattern STRING_VAR_PATTERN =
+            java.util.regex.Pattern.compile("\\$\\{([a-zA-Z_][a-zA-Z0-9_]*)\\}|\\$([a-zA-Z_][a-zA-Z0-9_]*)");
+
+    /**
+     * Replace {@code $name} / {@code ${name}} occurrences in a string literal
+     * with values from the active scope. Unresolved references are left
+     * as-is so top-level commands without a scope don't throw.
+     */
+    private String interpolateString(String raw) {
+        if (raw == null || raw.indexOf('$') < 0) return raw;
+        var m = STRING_VAR_PATTERN.matcher(raw);
+        StringBuilder out = new StringBuilder();
+        while (m.find()) {
+            String name = m.group(1) != null ? m.group(1) : m.group(2);
+            Double v = executor.resolveVar(name);
+            String replacement = v == null ? m.group() : formatInterpolatedNumber(v);
+            m.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(replacement));
+        }
+        m.appendTail(out);
+        return out.toString();
+    }
+
+    /** Format a loop-var or param value for embedding in an identifier: whole numbers render without ".0". */
+    private static String formatInterpolatedNumber(double v) {
+        if (v == Math.floor(v) && !Double.isInfinite(v)) return Long.toString((long) v);
+        return Double.toString(v);
     }
 
     /**
