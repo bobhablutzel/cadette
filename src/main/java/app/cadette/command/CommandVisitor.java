@@ -33,6 +33,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * ANTLR visitor that executes parsed commands against the SceneManager.
@@ -206,29 +209,24 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         String name = assembly.getName();
         String templateName = assembly.getTemplateName();
 
-        // Capture all joints involving assembly parts
-        List<Joint> assemblyJoints = new ArrayList<>();
-        for (Part p : assembly.getParts()) {
-            assemblyJoints.addAll(scene.getJointRegistry().getJointsForPart(p.getName()));
-        }
-        // Deduplicate
-        assemblyJoints = assemblyJoints.stream().distinct().toList();
+        // Joints touching any assembly part, deduplicated.
+        List<Joint> assemblyJoints = assembly.getParts().stream()
+                .flatMap(p -> scene.getJointRegistry().getJointsForPart(p.getName()).stream())
+                .distinct()
+                .toList();
 
-        // Capture snapshots for undo
-        List<DeleteAssemblyAction.PartSnapshot> snapshots = new ArrayList<>();
-        for (Part p : assembly.getParts()) {
-            SceneManager.ObjectRecord rec = scene.getObjectRecord(p.getName());
-            if (rec != null) {
-                snapshots.add(new DeleteAssemblyAction.PartSnapshot(
-                        p, rec.position(), rec.size(), rec.color(),
-                        scene.getRotation(p.getName())));
-            }
-        }
+        // Snapshots for undo — skip parts whose scene record is gone.
+        List<DeleteAssemblyAction.PartSnapshot> snapshots = assembly.getParts().stream()
+                .map(p -> {
+                    SceneManager.ObjectRecord rec = scene.getObjectRecord(p.getName());
+                    return rec == null ? null : new DeleteAssemblyAction.PartSnapshot(
+                            p, rec.position(), rec.size(), rec.color(),
+                            scene.getRotation(p.getName()));
+                })
+                .filter(Objects::nonNull)
+                .toList();
 
-        // Delete all parts
-        for (Part p : assembly.getParts().reversed()) {
-            scene.deleteObject(p.getName());
-        }
+        assembly.getParts().reversed().forEach(p -> scene.deleteObject(p.getName()));
         scene.removeAssembly(name);
 
         executor.pushAction(new DeleteAssemblyAction(scene, name, templateName,
@@ -305,14 +303,7 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         List<String> partNames = assembly.getParts().stream()
                 .map(Part::getName).toList();
 
-        // Apply delta to all parts
-        for (String partName : partNames) {
-            SceneManager.ObjectRecord rec = scene.getObjectRecord(partName);
-            if (rec != null) {
-                scene.moveObject(partName, rec.position().add(delta));
-            }
-        }
-
+        shiftByName(partNames, delta);
         executor.pushAction(new MoveAssemblyAction(scene, name, delta, partNames));
         return String.format("Moved assembly '%s' (%d parts) to (%.2f, %.2f, %.2f) %s",
                 name, partNames.size(),
@@ -385,12 +376,7 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
             if (assembly != null) {
                 List<String> partNames = assembly.getParts().stream()
                         .map(Part::getName).toList();
-                for (String pn : partNames) {
-                    SceneManager.ObjectRecord rec = scene.getObjectRecord(pn);
-                    if (rec != null) {
-                        scene.moveObject(pn, rec.position().add(moveVec));
-                    }
-                }
+                shiftByName(partNames, moveVec);
                 executor.pushAction(new MoveAssemblyAction(scene, targetName, moveVec, partNames));
             } else {
                 SceneManager.ObjectRecord rec = scene.getObjectRecord(targetName);
@@ -866,18 +852,20 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         if (ctx.pathExpr() == null) {
             return executor.runWithFileChooser();
         }
-        StringBuilder sb = new StringBuilder();
-        for (var seg : ctx.pathExpr().pathSegment()) {
-            if (seg.PATH_LITERAL() != null) {
-                sb.append(seg.PATH_LITERAL().getText());
-            } else if (seg.PATH_VAR() != null) {
-                sb.append(resolvePathVar(seg.PATH_VAR().getText().substring(1)));
-            } else if (seg.PATH_QUOTED() != null) {
-                String q = seg.PATH_QUOTED().getText();
-                sb.append(q, 1, q.length() - 1); // strip surrounding quotes
-            }
+        String path = ctx.pathExpr().pathSegment().stream()
+                .map(CommandVisitor::pathSegmentText)
+                .collect(Collectors.joining());
+        return executor.runScriptPath(path);
+    }
+
+    private static String pathSegmentText(CadetteCommandParser.PathSegmentContext seg) {
+        if (seg.PATH_LITERAL() != null) return seg.PATH_LITERAL().getText();
+        if (seg.PATH_VAR() != null) return resolvePathVar(seg.PATH_VAR().getText().substring(1));
+        if (seg.PATH_QUOTED() != null) {
+            String q = seg.PATH_QUOTED().getText();
+            return q.substring(1, q.length() - 1); // strip surrounding quotes
         }
-        return executor.runScriptPath(sb.toString());
+        return "";
     }
 
     /**
@@ -887,22 +875,25 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
      * thickness and asymmetric rules are future work.
      */
     private static String checkJointMaterialCompatibility(JointType type, Part receiving, Part inserted) {
-        for (var entry : new Part[][] { {receiving, null}, {inserted, null} }) {
-            Part p = entry[0];
-            if (p == null) continue; // primitive, not a part — skip material check
-            var mat = p.getMaterial();
-            if (mat == null) continue;
-            if (!type.supports(mat.getType())) {
-                return String.format(
-                        "Cannot make a %s joint in '%s' (%s). %s not applicable to %s.",
-                        type.getDisplayName().toLowerCase(),
-                        p.getName(),
-                        mat.getDisplayName(),
-                        type.getDisplayName(),
-                        mat.getType().name().toLowerCase());
-            }
-        }
-        return null;
+        return Stream.of(receiving, inserted)
+                .filter(Objects::nonNull)
+                .map(p -> incompatibilityMessage(type, p))
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(null);
+    }
+
+    /** Null if the part's material supports this joint type; error message otherwise. */
+    private static String incompatibilityMessage(JointType type, Part p) {
+        var mat = p.getMaterial();
+        if (mat == null || type.supports(mat.getType())) return null;
+        return String.format(
+                "Cannot make a %s joint in '%s' (%s). %s not applicable to %s.",
+                type.getDisplayName().toLowerCase(),
+                p.getName(),
+                mat.getDisplayName(),
+                type.getDisplayName(),
+                mat.getType().name().toLowerCase());
     }
 
     /** Resolve a path variable — home/user aliases first, then env vars. */
@@ -920,16 +911,16 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
     @Override
     public String visitDefineCommand(CadetteCommandParser.DefineCommandContext ctx) {
         String name = templateRefText(ctx.templateRef());
-        List<String> paramNames = new ArrayList<>();
-        Map<String, String> paramAliases = new LinkedHashMap<>();
-        for (var decl : ctx.paramDecl()) {
-            var names = decl.paramName();
-            String paramName = names.get(0).getText().toLowerCase();
-            paramNames.add(paramName);
-            if (names.size() > 1) {
-                paramAliases.put(names.get(1).getText().toLowerCase(), paramName);
-            }
-        }
+        List<String> paramNames = ctx.paramDecl().stream()
+                .map(d -> d.paramName().get(0).getText().toLowerCase())
+                .toList();
+        Map<String, String> paramAliases = ctx.paramDecl().stream()
+                .filter(d -> d.paramName().size() > 1)
+                .collect(Collectors.toMap(
+                        d -> d.paramName().get(1).getText().toLowerCase(),
+                        d -> d.paramName().get(0).getText().toLowerCase(),
+                        (a, b) -> b,
+                        LinkedHashMap::new));
         return executor.beginDefine(name, paramNames, paramAliases);
     }
 
@@ -1019,25 +1010,19 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         String abbr = executor.getUnits().getAbbreviation();
         StringBuilder sb = new StringBuilder("Objects in scene (units: " + abbr + "):\n");
 
-        // Track which parts belong to assemblies so we can list standalone objects separately
-        java.util.Set<String> assemblyPartNames = new java.util.HashSet<>();
         Map<String, Assembly> assemblies = scene.getAllAssemblies();
+        // Pre-compute part names owned by any assembly so standalone filtering
+        // below is independent of the listing pass.
+        java.util.Set<String> assemblyPartNames = assemblies.values().stream()
+                .flatMap(a -> a.getParts().stream())
+                .map(Part::getName)
+                .collect(Collectors.toSet());
 
         // List assemblies first
-        for (Assembly assembly : assemblies.values()) {
-            String templateLabel = "";
-            String tmplName = assembly.getTemplateName();
-            if (tmplName != null) {
-                Template tmpl = TemplateRegistry.instance().get(tmplName);
-                String src = tmpl != null ? tmpl.getSource() : null;
-                templateLabel = src != null
-                        ? " [" + tmplName + " from " + src + "]"
-                        : " [" + tmplName + "]";
-            }
+        assemblies.values().forEach(assembly -> {
             sb.append(String.format("\n  %-20s assembly%s (%d parts)%n",
-                    assembly.getName(), templateLabel, assembly.getParts().size()));
-            for (Part p : assembly.getParts()) {
-                assemblyPartNames.add(p.getName());
+                    assembly.getName(), assemblyTemplateLabel(assembly), assembly.getParts().size()));
+            assembly.getParts().forEach(p -> {
                 SceneManager.ObjectRecord rec = recs.get(p.getName());
                 if (rec != null) {
                     Vector3f pos = rec.position();
@@ -1046,58 +1031,73 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
                             fromMm(p.getCutWidthMm()), fromMm(p.getCutHeightMm()), abbr,
                             fromMm(pos.x), fromMm(pos.y), fromMm(pos.z)));
                 }
-            }
-        }
+            });
+        });
 
         // List standalone objects (not in any assembly)
-        boolean hasStandalone = false;
-        for (var rec : recs.values()) {
-            if (assemblyPartNames.contains(rec.name())) continue;
-            if (!hasStandalone) {
-                if (!assemblies.isEmpty()) sb.append("\n  Standalone:\n");
-                hasStandalone = true;
-            }
-            Vector3f pos = rec.position();
-            Part part = scene.getPart(rec.name());
-            if (part != null) {
-                sb.append(String.format("  %-20s [%s] %.2f x %.2f %s (%.2f thick)  at (%.2f, %.2f, %.2f)  grain: %s%n",
-                        part.getName(), part.getMaterial().getName(),
-                        fromMm(part.getCutWidthMm()), fromMm(part.getCutHeightMm()), abbr,
-                        fromMm(part.getThicknessMm()),
-                        fromMm(pos.x), fromMm(pos.y), fromMm(pos.z),
-                        part.getGrainRequirement().name().toLowerCase()));
-            } else {
-                Vector3f size = rec.size();
-                sb.append(String.format("  %-20s %-10s at (%.2f, %.2f, %.2f)  size (%.2f, %.2f, %.2f) %s%n",
-                        rec.name(), rec.shapeType(),
-                        fromMm(pos.x), fromMm(pos.y), fromMm(pos.z),
-                        fromMm(size.x), fromMm(size.y), fromMm(size.z),
-                        abbr));
-            }
+        List<SceneManager.ObjectRecord> standalone = recs.values().stream()
+                .filter(rec -> !assemblyPartNames.contains(rec.name()))
+                .toList();
+        if (!standalone.isEmpty()) {
+            if (!assemblies.isEmpty()) sb.append("\n  Standalone:\n");
+            standalone.forEach(rec -> sb.append(standaloneLine(rec, abbr)).append("\n"));
         }
         return sb.toString().stripTrailing();
     }
 
-    private String listMaterials() {
-        StringBuilder sb = new StringBuilder("Available materials:\n");
-        String abbr = executor.getUnits().getAbbreviation();
-        for (var mat : MaterialCatalog.instance().getAll()) {
-            sb.append(String.format("  %-22s %-30s  thickness: %.2f %s  type: %s  kind: %s",
-                    mat.getName(), mat.getDisplayName(),
-                    fromMm(mat.getThicknessMm()), abbr,
-                    mat.getType().name().toLowerCase(),
-                    mat.getKind().name().toLowerCase()));
-            if (mat.getKind() == app.cadette.model.MaterialKind.SHEET_GOOD
-                    && mat.getSheetWidthMm() != null) {
-                sb.append(String.format("  sheet: %.0f x %.0f %s",
-                        fromMm(mat.getSheetWidthMm()), fromMm(mat.getSheetHeightMm()), abbr));
-            }
-            if (mat.getGrainDirection() != app.cadette.model.GrainDirection.NONE) {
-                sb.append("  grain: yes");
-            }
-            sb.append('\n');
+    private static String assemblyTemplateLabel(Assembly assembly) {
+        String tmplName = assembly.getTemplateName();
+        if (tmplName == null) return "";
+        Template tmpl = TemplateRegistry.instance().get(tmplName);
+        String src = tmpl != null ? tmpl.getSource() : null;
+        return src != null
+                ? " [" + tmplName + " from " + src + "]"
+                : " [" + tmplName + "]";
+    }
+
+    private String standaloneLine(SceneManager.ObjectRecord rec, String abbr) {
+        Vector3f pos = rec.position();
+        Part part = scene.getPart(rec.name());
+        if (part != null) {
+            return String.format("  %-20s [%s] %.2f x %.2f %s (%.2f thick)  at (%.2f, %.2f, %.2f)  grain: %s",
+                    part.getName(), part.getMaterial().getName(),
+                    fromMm(part.getCutWidthMm()), fromMm(part.getCutHeightMm()), abbr,
+                    fromMm(part.getThicknessMm()),
+                    fromMm(pos.x), fromMm(pos.y), fromMm(pos.z),
+                    part.getGrainRequirement().name().toLowerCase());
         }
-        return sb.toString().stripTrailing();
+        Vector3f size = rec.size();
+        return String.format("  %-20s %-10s at (%.2f, %.2f, %.2f)  size (%.2f, %.2f, %.2f) %s",
+                rec.name(), rec.shapeType(),
+                fromMm(pos.x), fromMm(pos.y), fromMm(pos.z),
+                fromMm(size.x), fromMm(size.y), fromMm(size.z),
+                abbr);
+    }
+
+    private String listMaterials() {
+        String abbr = executor.getUnits().getAbbreviation();
+        String body = MaterialCatalog.instance().getAll().stream()
+                .map(mat -> materialLine(mat, abbr))
+                .collect(Collectors.joining("\n"));
+        return "Available materials:\n" + body;
+    }
+
+    private String materialLine(app.cadette.model.Material mat, String abbr) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("  %-22s %-30s  thickness: %.2f %s  type: %s  kind: %s",
+                mat.getName(), mat.getDisplayName(),
+                fromMm(mat.getThicknessMm()), abbr,
+                mat.getType().name().toLowerCase(),
+                mat.getKind().name().toLowerCase()));
+        if (mat.getKind() == app.cadette.model.MaterialKind.SHEET_GOOD
+                && mat.getSheetWidthMm() != null) {
+            sb.append(String.format("  sheet: %.0f x %.0f %s",
+                    fromMm(mat.getSheetWidthMm()), fromMm(mat.getSheetHeightMm()), abbr));
+        }
+        if (mat.getGrainDirection() != app.cadette.model.GrainDirection.NONE) {
+            sb.append("  grain: yes");
+        }
+        return sb.toString();
     }
 
     private String showInfo(String name) {
@@ -1160,19 +1160,24 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         var joints = scene.getJointRegistry().getJointsForPart(name);
         if (!joints.isEmpty()) {
             sb.append("  Joints:\n");
-            for (Joint j : joints) {
-                String role = j.getReceivingPartName().equals(name) ? "receives" : "inserted into";
-                String other = j.getReceivingPartName().equals(name)
-                        ? j.getInsertedPartName() : j.getReceivingPartName();
-                sb.append(String.format("    %s \"%s\" (%s", role, other, j.getType().getDisplayName()));
-                if (j.getDepthMm() > 0) {
-                    sb.append(String.format(", depth %.2f %s", fromMm(j.getDepthMm()), abbr));
-                }
-                sb.append(")\n");
-            }
+            String lines = joints.stream()
+                    .map(j -> jointInfoLine(j, name, abbr))
+                    .collect(Collectors.joining("\n"));
+            sb.append(lines).append("\n");
         }
 
         return sb.toString().stripTrailing();
+    }
+
+    /** Info-panel formatting: names the role (receives/inserted into) from the part's POV. */
+    private String jointInfoLine(Joint j, String partName, String abbr) {
+        boolean isReceiving = j.getReceivingPartName().equals(partName);
+        String role = isReceiving ? "receives" : "inserted into";
+        String other = isReceiving ? j.getInsertedPartName() : j.getReceivingPartName();
+        String depth = j.getDepthMm() > 0
+                ? String.format(", depth %.2f %s", fromMm(j.getDepthMm()), abbr)
+                : "";
+        return String.format("    %s \"%s\" (%s%s)", role, other, j.getType().getDisplayName(), depth);
     }
 
     private String showAssemblyInfo(Assembly assembly) {
@@ -1194,58 +1199,79 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
 
         // List parts
         sb.append("\n  Parts:\n");
-        for (Part p : assembly.getParts()) {
-            SceneManager.ObjectRecord rec = scene.getObjectRecord(p.getName());
-            if (rec != null) {
-                Vector3f pos = rec.position();
-                sb.append(String.format("    %-25s [%s] %.2f x %.2f %s  at (%.2f, %.2f, %.2f)%n",
-                        p.getName(), p.getMaterial().getName(),
-                        fromMm(p.getCutWidthMm()), fromMm(p.getCutHeightMm()), abbr,
-                        fromMm(pos.x), fromMm(pos.y), fromMm(pos.z)));
-            }
-        }
+        String partsBody = assembly.getParts().stream()
+                .map(p -> {
+                    SceneManager.ObjectRecord rec = scene.getObjectRecord(p.getName());
+                    if (rec == null) return null;
+                    Vector3f pos = rec.position();
+                    return String.format("    %-25s [%s] %.2f x %.2f %s  at (%.2f, %.2f, %.2f)",
+                            p.getName(), p.getMaterial().getName(),
+                            fromMm(p.getCutWidthMm()), fromMm(p.getCutHeightMm()), abbr,
+                            fromMm(pos.x), fromMm(pos.y), fromMm(pos.z));
+                })
+                .filter(Objects::nonNull)
+                .collect(Collectors.joining("\n"));
+        sb.append(partsBody).append("\n");
 
         // Assembly joints
         var joints = scene.getJointRegistry().getJointsForAssembly(assembly);
         if (!joints.isEmpty()) {
             sb.append("\n  Joints:\n");
-            for (Joint j : joints) {
-                sb.append(String.format("    %-15s  \"%s\" ← \"%s\"",
-                        j.getType().getDisplayName(), j.getReceivingPartName(), j.getInsertedPartName()));
-                if (j.getDepthMm() > 0) {
-                    sb.append(String.format("  depth: %.2f %s", fromMm(j.getDepthMm()), abbr));
-                }
-                sb.append('\n');
-            }
+            String lines = joints.stream()
+                    .map(j -> jointSummaryLine(j, abbr, "    ", false))
+                    .collect(Collectors.joining("\n"));
+            sb.append(lines).append("\n");
         }
 
         return sb.toString().stripTrailing();
     }
 
+    /**
+     * Summary formatting: receiving ← inserted, optional depth, and (if
+     * {@code includeScrews}) pocket-screw count/spacing. Indent varies —
+     * assembly-info uses 4 spaces, `show joints` uses 2.
+     */
+    private String jointSummaryLine(Joint j, String abbr, String indent, boolean includeScrews) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("%s%-15s  \"%s\" ← \"%s\"",
+                indent, j.getType().getDisplayName(),
+                j.getReceivingPartName(), j.getInsertedPartName()));
+        if (j.getDepthMm() > 0) {
+            sb.append(String.format("  depth: %.2f %s", fromMm(j.getDepthMm()), abbr));
+        }
+        if (includeScrews && j.getScrewCount() > 0) {
+            sb.append(String.format("  screws: %d", j.getScrewCount()));
+            if (j.getScrewSpacingMm() > 0) {
+                sb.append(String.format(" @ %.2f %s", fromMm(j.getScrewSpacingMm()), abbr));
+            }
+        }
+        return sb.toString();
+    }
+
     private String listTemplates() {
         var templates = TemplateRegistry.instance().getAll();
         if (templates.isEmpty()) return "No templates defined.";
-        StringBuilder sb = new StringBuilder("Available templates:\n");
-        for (Template t : templates) {
-            // Build param string with aliases
-            StringBuilder params = new StringBuilder();
-            for (String p : t.getParamNames()) {
-                if (!params.isEmpty()) params.append(", ");
-                params.append(p);
-                t.getParamAliases().entrySet().stream()
+        String body = templates.stream()
+                .map(t -> String.format("  %-36s params: %-36s  %d lines%n      source: %s",
+                        t.getName(),
+                        paramDescription(t),
+                        t.getBodyLines().size(),
+                        t.getSource() != null ? t.getSource() : "unknown"))
+                .collect(Collectors.joining("\n"));
+        return "Available templates:\n" + body
+                + "\n\nUsage: create <template> \"name\" param1 value1 ..."
+                + "\n       Aliases work: create base_cabinet K w 600 h 900 d 400";
+    }
+
+    /** Format template parameters as "width(w), height(h), depth(d)". */
+    private static String paramDescription(Template t) {
+        return t.getParamNames().stream()
+                .map(p -> p + t.getParamAliases().entrySet().stream()
                         .filter(e -> e.getValue().equals(p))
                         .findFirst()
-                        .ifPresent(e -> params.append("(").append(e.getKey()).append(")"));
-            }
-            String src = t.getSource() != null ? t.getSource() : "unknown";
-            sb.append(String.format("  %-36s params: %-36s  %d lines%n      source: %s%n",
-                    t.getName(), params,
-                    t.getBodyLines().size(),
-                    src));
-        }
-        sb.append("\nUsage: create <template> \"name\" param1 value1 ...");
-        sb.append("\n       Aliases work: create base_cabinet K w 600 h 900 d 400");
-        return sb.toString().stripTrailing();
+                        .map(e -> "(" + e.getKey() + ")")
+                        .orElse(""))
+                .collect(Collectors.joining(", "));
     }
 
     private String showTemplateDefinition(String name) {
@@ -1254,63 +1280,36 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
             return "Template '" + name + "' not found. Use 'show templates' to list.";
         }
 
-        StringBuilder sb = new StringBuilder();
-        if (t.isStandard()) {
-            sb.append("# Standard template — copy and modify to customize.\n");
-            sb.append("# Drop an override into ~/.cadette/templates/ (filesystem beats classpath).\n\n");
-        }
+        String banner = t.isStandard()
+                ? "# Standard template — copy and modify to customize.\n"
+                + "# Drop an override into ~/.cadette/templates/ (filesystem beats classpath).\n\n"
+                : "";
 
-        // Build params string with aliases
-        StringBuilder params = new StringBuilder();
-        for (String p : t.getParamNames()) {
-            if (!params.isEmpty()) params.append(", ");
-            params.append(p);
-            t.getParamAliases().entrySet().stream()
-                    .filter(e -> e.getValue().equals(p))
-                    .findFirst()
-                    .ifPresent(e -> params.append("(").append(e.getKey()).append(")"));
-        }
+        String header = "define \"" + t.getName() + "\""
+                + (t.getParamNames().isEmpty() ? "" : " params " + paramDescription(t));
 
-        sb.append("define \"").append(t.getName()).append("\"");
-        if (!t.getParamNames().isEmpty()) {
-            sb.append(" params ").append(params);
-        }
-        sb.append('\n');
+        String body = t.getBodyLines().stream()
+                .map(line -> "  " + line)
+                .collect(Collectors.joining("\n"));
 
-        for (String line : t.getBodyLines()) {
-            sb.append("  ").append(line).append('\n');
-        }
-
-        sb.append("end define");
-        return sb.toString();
+        return banner + header + "\n" + body + "\nend define";
     }
 
     private String listJoints() {
         var joints = scene.getJointRegistry().getAllJoints();
         if (joints.isEmpty()) return "No joints defined.";
         String abbr = executor.getUnits().getAbbreviation();
-        StringBuilder sb = new StringBuilder("Joints:\n");
-        for (Joint j : joints) {
-            sb.append(String.format("  %-15s  \"%s\" ← \"%s\"",
-                    j.getType().getDisplayName(), j.getReceivingPartName(), j.getInsertedPartName()));
-            if (j.getDepthMm() > 0) {
-                sb.append(String.format("  depth: %.2f %s", fromMm(j.getDepthMm()), abbr));
-            }
-            if (j.getScrewCount() > 0) {
-                sb.append(String.format("  screws: %d", j.getScrewCount()));
-                if (j.getScrewSpacingMm() > 0) {
-                    sb.append(String.format(" @ %.2f %s", fromMm(j.getScrewSpacingMm()), abbr));
-                }
-            }
-            sb.append('\n');
-        }
-        var summary = scene.getJointRegistry().getSummary();
-        sb.append("\nSummary: ");
-        sb.append(summary.entrySet().stream()
+
+        String body = joints.stream()
+                .map(j -> jointSummaryLine(j, abbr, "  ", true))
+                .collect(Collectors.joining("\n"));
+
+        String summary = scene.getJointRegistry().getSummary().entrySet().stream()
                 .map(e -> e.getValue() + "x " + e.getKey().getDisplayName())
-                .reduce((a, b) -> a + ", " + b)
-                .orElse("none"));
-        return sb.toString().stripTrailing();
+                .collect(Collectors.joining(", "));
+        if (summary.isEmpty()) summary = "none";
+
+        return "Joints:\n" + body + "\n\nSummary: " + summary;
     }
 
     private String showCutList() {
@@ -1320,40 +1319,52 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         var entries = CutListGenerator.generateCutList(parts, scene.getJointRegistry());
         String abbr = executor.getUnits().getAbbreviation();
 
+        // Entries arrive sorted by material name, so groupingBy on a
+        // LinkedHashMap gives the same visual ordering as the old state-
+        // tracking loop — each material gets one section.
+        Map<String, List<CutListGenerator.CutListEntry>> byMaterial = entries.stream()
+                .collect(Collectors.groupingBy(
+                        e -> e.getMaterial().getName(),
+                        LinkedHashMap::new,
+                        Collectors.toList()));
+
+        String sections = byMaterial.values().stream()
+                .map(group -> cutListSection(group, abbr))
+                .collect(Collectors.joining("\n"));
+
+        return String.format("Cut List (units: %s):%n%n", abbr)
+                + sections
+                + String.format("%n  Total: %d parts", entries.size());
+    }
+
+    private String cutListSection(List<CutListGenerator.CutListEntry> group, String abbr) {
+        CutListGenerator.CutListEntry first = group.get(0);
+        String header = String.format("  %s (%s, %.2f %s thick):",
+                first.getMaterial().getDisplayName(),
+                first.getMaterial().getName(),
+                fromMm(first.getThicknessMm()), abbr);
+        String body = group.stream()
+                .map(e -> cutListEntryLines(e, abbr))
+                .collect(Collectors.joining("\n"));
+        return header + "\n" + body + "\n";
+    }
+
+    private String cutListEntryLines(CutListGenerator.CutListEntry entry, String abbr) {
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format("Cut List (units: %s):%n%n", abbr));
-
-        String currentMaterial = "";
-        for (var entry : entries) {
-            // Print material header when it changes
-            if (!entry.getMaterial().getName().equals(currentMaterial)) {
-                currentMaterial = entry.getMaterial().getName();
-                sb.append(String.format("  %s (%s, %.2f %s thick):%n",
-                        entry.getMaterial().getDisplayName(),
-                        entry.getMaterial().getName(),
-                        fromMm(entry.getThicknessMm()), abbr));
-            }
-
-            // Part line
-            sb.append(String.format("    %-25s %8.2f x %-8.2f %s",
-                    entry.getPartName(),
-                    fromMm(entry.getCutWidthMm()),
-                    fromMm(entry.getCutHeightMm()),
-                    abbr));
-
-            if (entry.getGrainRequirement() != GrainRequirement.ANY) {
-                sb.append("  grain: ").append(entry.getGrainRequirement().name().toLowerCase());
-            }
-            sb.append('\n');
-
-            // Machining operations
-            for (String op : entry.getOperations()) {
-                sb.append("      → ").append(op).append('\n');
-            }
+        sb.append(String.format("    %-25s %8.2f x %-8.2f %s",
+                entry.getPartName(),
+                fromMm(entry.getCutWidthMm()),
+                fromMm(entry.getCutHeightMm()),
+                abbr));
+        if (entry.getGrainRequirement() != GrainRequirement.ANY) {
+            sb.append("  grain: ").append(entry.getGrainRequirement().name().toLowerCase());
         }
-
-        sb.append(String.format("%n  Total: %d parts", entries.size()));
-        return sb.toString().stripTrailing();
+        if (!entry.getOperations().isEmpty()) {
+            sb.append("\n").append(entry.getOperations().stream()
+                    .map(op -> "      → " + op)
+                    .collect(Collectors.joining("\n")));
+        }
+        return sb.toString();
     }
 
     private String showBom() {
@@ -1368,42 +1379,50 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         sb.append("  Materials:\n");
         var layouts = SheetLayoutGenerator.generateLayouts(parts, scene.getKerfMm());
         var bomEntries = CutListGenerator.generateBom(parts, layouts);
-        for (var entry : bomEntries) {
-            sb.append(String.format("    %d pc  %-30s  (%.2f %s thick)",
-                    entry.getPartCount(),
-                    entry.getMaterial().getDisplayName(),
-                    fromMm(entry.getMaterial().getThicknessMm()), abbr));
-            if (entry.getSheetCount() != null) {
-                sb.append(String.format("  %d sheet%s (%.0f x %.0f %s, %.1f%% offcut)",
-                        entry.getSheetCount(),
-                        entry.getSheetCount() == 1 ? "" : "s",
-                        fromMm(entry.getMaterial().getSheetWidthMm()),
-                        fromMm(entry.getMaterial().getSheetHeightMm()),
-                        abbr,
-                        entry.getOffcutPercent()));
-            }
-            sb.append('\n');
-        }
+        sb.append(bomEntries.stream()
+                .map(entry -> bomLine(entry, abbr))
+                .collect(Collectors.joining("\n")));
+        sb.append("\n");
 
         // Fasteners
         var fasteners = CutListGenerator.generateFasteners(scene.getJointRegistry());
         if (!fasteners.isEmpty()) {
             sb.append("\n  Fasteners:\n");
-            for (var f : fasteners) {
-                sb.append(String.format("    %d x %s%n", f.getCount(), f.getType()));
-            }
+            sb.append(fasteners.stream()
+                    .map(f -> String.format("    %d x %s", f.getCount(), f.getType()))
+                    .collect(Collectors.joining("\n")));
+            sb.append("\n");
         }
 
         // Joint summary
         var jointSummary = scene.getJointRegistry().getSummary();
         if (!jointSummary.isEmpty()) {
             sb.append("\n  Joinery operations:\n");
-            for (var entry : jointSummary.entrySet()) {
-                sb.append(String.format("    %d x %s%n", entry.getValue(), entry.getKey().getDisplayName()));
-            }
+            sb.append(jointSummary.entrySet().stream()
+                    .map(e -> String.format("    %d x %s", e.getValue(), e.getKey().getDisplayName()))
+                    .collect(Collectors.joining("\n")));
+            sb.append("\n");
         }
 
         return sb.toString().stripTrailing();
+    }
+
+    private String bomLine(CutListGenerator.BomEntry entry, String abbr) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("    %d pc  %-30s  (%.2f %s thick)",
+                entry.getPartCount(),
+                entry.getMaterial().getDisplayName(),
+                fromMm(entry.getMaterial().getThicknessMm()), abbr));
+        if (entry.getSheetCount() != null) {
+            sb.append(String.format("  %d sheet%s (%.0f x %.0f %s, %.1f%% offcut)",
+                    entry.getSheetCount(),
+                    entry.getSheetCount() == 1 ? "" : "s",
+                    fromMm(entry.getMaterial().getSheetWidthMm()),
+                    fromMm(entry.getMaterial().getSheetHeightMm()),
+                    abbr,
+                    entry.getOffcutPercent()));
+        }
+        return sb.toString();
     }
 
     private String showLayout() {
@@ -1415,65 +1434,71 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         if (layouts.isEmpty()) return "No sheet goods in scene (only hardwood/metal parts).";
 
         String abbr = executor.getUnits().getAbbreviation();
-        StringBuilder sb = new StringBuilder();
-        sb.append(String.format("Sheet Layouts (%s, kerf: %.1f %s):\n",
-                abbr, fromMm(kerfMm), abbr));
 
-        // Group layouts by material for numbering
-        String currentMaterial = null;
-        int sheetNum = 0;
-        int materialSheetCount = 0;
+        // Group by display name so each material's sheets get "Sheet i of N" numbering.
+        Map<String, List<SheetLayout>> byMaterial = layouts.stream()
+                .collect(Collectors.groupingBy(
+                        l -> l.getMaterial().getDisplayName(),
+                        LinkedHashMap::new,
+                        Collectors.toList()));
 
-        // Pre-count sheets per material
-        java.util.Map<String, Integer> sheetCounts = new java.util.LinkedHashMap<>();
-        for (var layout : layouts) {
-            sheetCounts.merge(layout.getMaterial().getDisplayName(), 1, Integer::sum);
-        }
+        String sections = byMaterial.entrySet().stream()
+                .map(e -> layoutSection(e.getKey(), e.getValue(), abbr))
+                .collect(Collectors.joining("\n"));
 
-        for (var layout : layouts) {
-            String matName = layout.getMaterial().getDisplayName();
-            if (!matName.equals(currentMaterial)) {
-                currentMaterial = matName;
-                sheetNum = 1;
-                materialSheetCount = sheetCounts.get(matName);
-                sb.append('\n');
-            } else {
-                sheetNum++;
-            }
+        String summaryLines = byMaterial.entrySet().stream()
+                .map(e -> String.format("    %s: %d sheet%s",
+                        e.getKey(), e.getValue().size(),
+                        e.getValue().size() == 1 ? "" : "s"))
+                .collect(Collectors.joining("\n"));
 
+        int totalSheets = layouts.size();
+        return String.format("Sheet Layouts (%s, kerf: %.1f %s):\n", abbr, fromMm(kerfMm), abbr)
+                + sections
+                + "\n  Summary:\n"
+                + summaryLines
+                + String.format("\n    Total: %d sheet%s", totalSheets, totalSheets == 1 ? "" : "s");
+    }
+
+    /** Render all sheets for one material, numbered 1..N of the group. */
+    private String layoutSection(String matName, List<SheetLayout> groupLayouts, String abbr) {
+        int total = groupLayouts.size();
+        StringBuilder sb = new StringBuilder("\n");
+        for (int i = 0; i < groupLayouts.size(); i++) {
+            SheetLayout layout = groupLayouts.get(i);
             sb.append(String.format("  %s — Sheet %d of %d (%.0f x %.0f %s):\n",
-                    matName, sheetNum, materialSheetCount,
+                    matName, i + 1, total,
                     fromMm(layout.getSheetWidthMm()), fromMm(layout.getSheetHeightMm()), abbr));
-
-            for (var p : layout.getPlacements()) {
-                sb.append(String.format("    %-25s %6.1f x %6.1f %s  at (%6.1f, %6.1f)",
-                        p.getPartName(),
-                        fromMm(p.getWidthOnSheet()), fromMm(p.getHeightOnSheet()), abbr,
-                        fromMm(p.getX()), fromMm(p.getY())));
-                if (p.isRotated()) {
-                    sb.append("  rotated");
-                }
-                if (p.getGrainRequirement() != GrainRequirement.ANY) {
-                    sb.append("  grain: " + p.getGrainRequirement().name().toLowerCase());
-                }
-                sb.append('\n');
-            }
-
-            sb.append(String.format("    Used: %.1f%%   Offcut: %.1f%%\n",
+            sb.append(layout.getPlacements().stream()
+                    .map(p -> layoutPartLine(p, abbr))
+                    .collect(Collectors.joining("\n")));
+            sb.append(String.format("%n    Used: %.1f%%   Offcut: %.1f%%%n",
                     100f - layout.getOffcutPercent(), layout.getOffcutPercent()));
         }
-
-        // Summary
-        sb.append("\n  Summary:\n");
-        for (var entry : sheetCounts.entrySet()) {
-            sb.append(String.format("    %s: %d sheet%s\n",
-                    entry.getKey(), entry.getValue(),
-                    entry.getValue() == 1 ? "" : "s"));
-        }
-        int totalSheets = sheetCounts.values().stream().mapToInt(Integer::intValue).sum();
-        sb.append(String.format("    Total: %d sheet%s", totalSheets, totalSheets == 1 ? "" : "s"));
-
         return sb.toString();
+    }
+
+    private String layoutPartLine(SheetLayout.PlacedPart p, String abbr) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("    %-25s %6.1f x %6.1f %s  at (%6.1f, %6.1f)",
+                p.getPartName(),
+                fromMm(p.getWidthOnSheet()), fromMm(p.getHeightOnSheet()), abbr,
+                fromMm(p.getX()), fromMm(p.getY())));
+        if (p.isRotated()) sb.append("  rotated");
+        if (p.getGrainRequirement() != GrainRequirement.ANY) {
+            sb.append("  grain: ").append(p.getGrainRequirement().name().toLowerCase());
+        }
+        return sb.toString();
+    }
+
+    // -- Scene helpers --
+
+    /** Translate every named part by {@code delta}; parts missing from the scene are skipped. */
+    private void shiftByName(List<String> partNames, Vector3f delta) {
+        partNames.forEach(pn -> {
+            SceneManager.ObjectRecord rec = scene.getObjectRecord(pn);
+            if (rec != null) scene.moveObject(pn, rec.position().add(delta));
+        });
     }
 
     // -- Bounding box helpers (work for assemblies or individual objects) --
