@@ -32,13 +32,13 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Phase E3a — tests the custom mesh builder for parts with rect through-cuts.
+ * Tests the custom mesh builder for parts with rect cutouts — both through
+ * (E3a) and partial-depth pockets (E3b).
  *
  * We don't render pixels (can't, headless) but we can check mesh invariants:
  * triangle counts matching the decomposition, bounding boxes matching the
- * declared part size regardless of cutouts, partial-depth pockets being
- * ignored at this phase, and cutouts extending past the part clipping to
- * nothing.
+ * declared part size regardless of cutouts, pocket floors sitting at the
+ * correct Z, and cutouts extending past the part clipping to nothing.
  */
 class PartMeshBuilderTest {
 
@@ -178,28 +178,117 @@ class PartMeshBuilderTest {
         assertEquals(12, triangleCount(m));
     }
 
-    // ---- Partial-depth cutouts ignored in E3a ----
+    // ---- Partial-depth pockets (E3b) ----
 
     @Test
-    void partialDepthCutoutsAreIgnoredByMeshInPhaseE3a() {
-        // Phase E3b will render pockets. Until then, a partial-depth
-        // cutout leaves the mesh unchanged — the BOM still lists it.
+    void pocketAddsFloorAndPocketWalls() {
+        // Single 50×50 pocket on a 600×900 panel, depth 5.
+        // Grid: x {0, 100, 150, 600} → 3 cells; y {0, 100, 150, 900} → 3 cells.
+        //
+        //   faces: 9 cells kept (1 of them is the pocket cell, which still
+        //          has a top face at the pocket floor) × 2 (top + bottom)
+        //          × 2 tris = 36
+        //   outer walls: 3 grid segments × 4 sides × 2 tris = 24
+        //   pocket walls: 4 sides of the pocket cell (each a step-down from
+        //          full-thickness solid neighbour) × 2 tris = 8
+        //   total: 36 + 24 + 8 = 68
         Mesh m = buildRaw(600, 900, 18, List.of(
                 new Cutout.Rect(100, 100, 50, 50, 5f)));
-        assertEquals(12, triangleCount(m),
-                "partial-depth cutouts must not affect the mesh until E3b");
+        assertEquals(68, triangleCount(m),
+                "pocket adds a floor face and 4 pocket-wall segments");
     }
 
     @Test
-    void mixOfThroughAndPocketOnlyThroughAffectsMesh() {
-        // Mix one through-cut with one pocket. Only the through-cut alters
-        // the mesh.
+    void pocketFloorSitsAtCorrectZ() {
+        // A 5mm-deep pocket on an 18mm-thick panel: halfT = 9, pocket floor
+        // at halfT − depth = 4. The panel's top face (elsewhere) is at +9,
+        // bottom at −9. We should see Z = +4 appear as a distinct plane.
         Mesh m = buildRaw(600, 900, 18, List.of(
-                new Cutout.Rect(250, 400, 100, 100, null),      // through
-                new Cutout.Rect(500, 700, 20, 20, 5f)           // pocket
+                new Cutout.Rect(100, 100, 50, 50, 5f)));
+        VertexBuffer posBuf = m.getBuffer(VertexBuffer.Type.Position);
+        FloatBuffer fb = (FloatBuffer) posBuf.getData();
+        fb.rewind();
+        boolean sawPocketFloor = false;
+        while (fb.hasRemaining()) {
+            fb.get(); fb.get();                // x, y
+            float z = fb.get();
+            if (Math.abs(z - 4f) < 1e-4f) { sawPocketFloor = true; break; }
+        }
+        assertTrue(sawPocketFloor, "pocket floor should appear at Z = halfT − depth = 4");
+    }
+
+    @Test
+    void pocketLeavesBottomFaceSolid() {
+        // The −Z face should still span the full panel (the pocket only
+        // eats into the +Z side). Count Z = −9 vertices and make sure the
+        // bottom face rectangle still extends corner-to-corner.
+        Mesh m = buildRaw(600, 900, 18, List.of(
+                new Cutout.Rect(100, 100, 50, 50, 5f)));
+        VertexBuffer posBuf = m.getBuffer(VertexBuffer.Type.Position);
+        FloatBuffer fb = (FloatBuffer) posBuf.getData();
+        fb.rewind();
+        float minXatBottom = Float.POSITIVE_INFINITY;
+        float maxXatBottom = Float.NEGATIVE_INFINITY;
+        float minYatBottom = Float.POSITIVE_INFINITY;
+        float maxYatBottom = Float.NEGATIVE_INFINITY;
+        while (fb.hasRemaining()) {
+            float x = fb.get(), y = fb.get(), z = fb.get();
+            if (Math.abs(z - (-9f)) < 1e-4f) {
+                if (x < minXatBottom) minXatBottom = x;
+                if (x > maxXatBottom) maxXatBottom = x;
+                if (y < minYatBottom) minYatBottom = y;
+                if (y > maxYatBottom) maxYatBottom = y;
+            }
+        }
+        // Part is centred: extent from −300 to +300 in X, −450 to +450 in Y.
+        assertEquals(-300f, minXatBottom, 0.01f, "bottom face must reach −X edge");
+        assertEquals( 300f, maxXatBottom, 0.01f, "bottom face must reach +X edge");
+        assertEquals(-450f, minYatBottom, 0.01f, "bottom face must reach −Y edge");
+        assertEquals( 450f, maxYatBottom, 0.01f, "bottom face must reach +Y edge");
+    }
+
+    @Test
+    void throughCutOverlappingPocketWinsNoFloorInOverlap() {
+        // A through-cut and a pocket that overlap: through wins in the
+        // overlap region (no material at all), pocket lives only where it
+        // doesn't overlap the through.
+        //
+        // Panel 600×900, through (200, 200)→(300, 300), pocket (250, 250)→(350, 350).
+        // Only the non-overlapping parts of the pocket contribute floors.
+        Mesh m = buildRaw(600, 900, 18, List.of(
+                new Cutout.Rect(200, 200, 100, 100, null),
+                new Cutout.Rect(250, 250, 100, 100, 5f)
         ));
-        assertEquals(64, triangleCount(m),
-                "pockets should be invisible to the mesh; only the through-cut counts");
+        assertTrue(triangleCount(m) > 28,
+                "mixed through+pocket produces more geometry than a plain through cut");
+        // Bounding box unchanged.
+        Vector3f size = bboxSize(m);
+        assertEquals(600, size.x, 0.01f);
+        assertEquals(900, size.y, 0.01f);
+        assertEquals(18, size.z, 0.01f);
+    }
+
+    @Test
+    void overlappingPocketsDeepestWins() {
+        // Two pockets, one deeper than the other, with different depths in
+        // the overlap region. The deeper pocket's floor wins in the overlap.
+        Mesh m = buildRaw(600, 900, 18, List.of(
+                new Cutout.Rect(100, 100, 100, 100, 3f),
+                new Cutout.Rect(150, 150, 100, 100, 8f)
+        ));
+        VertexBuffer posBuf = m.getBuffer(VertexBuffer.Type.Position);
+        FloatBuffer fb = (FloatBuffer) posBuf.getData();
+        fb.rewind();
+        boolean sawShallowFloor = false;  // halfT − 3 = 6
+        boolean sawDeepFloor = false;     // halfT − 8 = 1
+        while (fb.hasRemaining()) {
+            fb.get(); fb.get();
+            float z = fb.get();
+            if (Math.abs(z - 6f) < 1e-4f) sawShallowFloor = true;
+            if (Math.abs(z - 1f) < 1e-4f) sawDeepFloor = true;
+        }
+        assertTrue(sawShallowFloor, "shallow pocket floor (Z=6) must exist outside overlap");
+        assertTrue(sawDeepFloor, "deep pocket floor (Z=1) must exist (wins in overlap)");
     }
 
     // ---- Multiple cutouts ----
