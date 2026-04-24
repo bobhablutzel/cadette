@@ -22,6 +22,7 @@ import lombok.Data;
 
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Generates cut lists and BOMs from parts and joints.
@@ -87,13 +88,21 @@ public class CutListGenerator {
                 .toList();
     }
 
-    /** Machining operations applied to a part (only when it's the receiving side of a joint). */
+    /**
+     * Machining operations applied to a part — joints where this part is
+     * the receiving side, plus any cutouts. Joints are listed first
+     * (they're the traditional cut-list operations); cutouts follow in
+     * the order they were added.
+     */
     private static List<String> operationsFor(Part part, JointRegistry joints) {
-        return joints.getJointsForPart(part.getName()).stream()
-                .filter(j -> j.getReceivingPartName().equals(part.getName()))
-                .map(CutListGenerator::describeOperation)
-                .flatMap(Optional::stream)
-                .toList();
+        return Stream.concat(
+                joints.getJointsForPart(part.getName()).stream()
+                        .filter(j -> j.getReceivingPartName().equals(part.getName()))
+                        .map(CutListGenerator::describeOperation)
+                        .flatMap(Optional::stream),
+                part.getCutouts().stream()
+                        .map(CutListGenerator::describeCutout)
+        ).toList();
     }
 
     private static Optional<String> describeOperation(Joint j) {
@@ -108,6 +117,19 @@ public class CutListGenerator {
                     : Optional.empty();
             default -> Optional.empty();  // butt — no machining
         };
+    }
+
+    private static String describeCutout(Cutout cutout) {
+        if (cutout instanceof Cutout.Rect r) {
+            String depthStr = r.depthMm() != null
+                    ? String.format(" %.1fmm deep", r.depthMm())
+                    : " through";
+            return String.format("cutout rect %.0f×%.0fmm at (%.0f, %.0f)%s",
+                    r.widthMm(), r.heightMm(), r.xMm(), r.yMm(), depthStr);
+        }
+        // Stub variants not yet reachable through the grammar, but will need
+        // their own describeCutout branches when they land.
+        return "cutout " + cutout.getClass().getSimpleName().toLowerCase();
     }
 
     /**

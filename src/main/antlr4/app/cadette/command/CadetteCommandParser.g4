@@ -67,6 +67,7 @@ command
     | resizeCommand
     | rotateCommand
     | joinCommand
+    | cutCommand
     | displayCommand
     | hideCommand
     | listCommand
@@ -216,6 +217,19 @@ grainReq
 
 joinCommand
     : JOIN objectName TO objectName WITH jointType joinArg*
+    ;
+
+// `cut <part> rect at x, y size w, h [depth N]` — removes a region from a part.
+// Shape alternatives (circle, polygon, spline) will be added as separate
+// cutShape productions in a later phase; the model already carries stubs.
+cutCommand
+    : CUT objectName cutShape
+    ;
+
+cutShape
+    : RECT AT expression COMMA expression
+      SIZE expression COMMA expression
+      (DEPTH expression)?                       # rectCutShape
     ;
 
 joinArg

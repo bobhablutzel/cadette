@@ -607,6 +607,53 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
     }
 
     @Override
+    public String visitCutCommand(CadetteCommandParser.CutCommandContext ctx) {
+        String partName = extractName(ctx.objectName());
+        Part part = scene.getPart(partName);
+        if (part == null) {
+            return "Part '" + partName + "' not found.";
+        }
+        Cutout cutout = buildCutout(ctx.cutShape());
+        part.addCutout(cutout);
+        executor.pushAction(new CutAction(scene, partName, cutout));
+        scene.markCutSheetDirty();
+        String abbr = executor.getUnits().getAbbreviation();
+        return "Added cutout to '" + partName + "': " + describeCutout(cutout, abbr);
+    }
+
+    /** Dispatch on the cutShape alternative to build the appropriate Cutout variant. */
+    private Cutout buildCutout(CadetteCommandParser.CutShapeContext ctx) {
+        if (ctx instanceof CadetteCommandParser.RectCutShapeContext r) {
+            // AT <x>, <y> SIZE <w>, <h> [DEPTH <d>] — expressions are evaluated
+            // against the active scope, which includes any template vars if
+            // we're inside a template body.
+            var exprs = r.expression();
+            float x = toMm(evalFloat(exprs.get(0)));
+            float y = toMm(evalFloat(exprs.get(1)));
+            float w = toMm(evalFloat(exprs.get(2)));
+            float h = toMm(evalFloat(exprs.get(3)));
+            Float depth = r.DEPTH() != null ? toMm(evalFloat(exprs.get(4))) : null;
+            return new Cutout.Rect(x, y, w, h, depth);
+        }
+        throw new IllegalStateException("Unhandled cutShape alternative: "
+                + ctx.getClass().getSimpleName());
+    }
+
+    /** Human-readable cutout description for command output. */
+    private String describeCutout(Cutout cutout, String abbr) {
+        if (cutout instanceof Cutout.Rect r) {
+            String depth = r.depthMm() != null
+                    ? String.format(" %.1f %s deep", fromMm(r.depthMm()), abbr)
+                    : " through";
+            return String.format("rect at (%.1f, %.1f) %s size %.1f × %.1f %s%s",
+                    fromMm(r.xMm()), fromMm(r.yMm()), abbr,
+                    fromMm(r.widthMm()), fromMm(r.heightMm()), abbr,
+                    depth);
+        }
+        return cutout.toString();  // variants not yet user-facing
+    }
+
+    @Override
     public String visitDisplayCommand(CadetteCommandParser.DisplayCommandContext ctx) {
         if (ctx.objectName() != null) {
             String name = extractName(ctx.objectName());

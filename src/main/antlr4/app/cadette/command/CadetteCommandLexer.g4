@@ -25,6 +25,8 @@ options {
 // ---- Default mode (command keywords and identifiers) ----
 
 CREATE     : 'create' | 'cr' ;
+CUT        : 'cut' ;
+RECT       : 'rect' | 'rectangle' ;
 DELETE     : 'delete' | 'del' ;
 MOVE       : 'move' | 'mv' ;
 RESIZE     : 'resize' ;
