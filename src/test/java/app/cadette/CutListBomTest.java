@@ -53,8 +53,9 @@ class CutListBomTest extends HeadlessTestBase {
         assertTrue(cutlist.contains("dado"), "Should list dado operations");
         assertTrue(cutlist.contains("9.0 mm deep"), "Should show dado depth");
 
-        // Should show total count
-        assertTrue(cutlist.contains("Total: 5 parts"), "Should show total");
+        // Should show total count — base_cabinet is 6 parts (4 plywood panels
+        // + hardboard back + toe-kick-front), since toe-kick is the default.
+        assertTrue(cutlist.contains("Total: 6 parts"), "Should show total");
     }
 
     @Test
@@ -64,8 +65,10 @@ class CutListBomTest extends HeadlessTestBase {
         String bom = exec("show bom");
         System.out.println(bom);
 
-        // Should show material counts
-        assertTrue(bom.contains("4 pc"), "Should show 4 plywood parts");
+        // Should show material counts — 5 plywood pieces (2 sides, bottom,
+        // top-stretcher, toe-kick-front) and 1 hardboard back, since
+        // toe-kick is the default.
+        assertTrue(bom.contains("5 pc"), "Should show 5 plywood parts");
         assertTrue(bom.contains("1 pc"), "Should show 1 hardboard part");
 
         // Should show actual sheet count and offcut for sheet goods

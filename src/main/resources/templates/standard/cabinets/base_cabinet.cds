@@ -14,7 +14,7 @@
 #     footprint, creating the classic recessed toe-space.
 #   - A toe-kick-front kick plate closes the back of that recess.
 
-define standard/cabinets/base_cabinet params width(w), height(h), depth(d), toe_kick=0, toe_kick_height=100mm, toe_kick_depth=75mm
+define standard/cabinets/base_cabinet params width(w), height(h), depth(d), toe_kick=1, toe_kick_height=100mm, toe_kick_depth=75mm
   # Sides
   create part "left-side" size $depth, $height at 0, 0, 0 grain vertical
   rotate "left-side" 0, 90, 0

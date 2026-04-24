@@ -98,16 +98,30 @@ class BaseCabinetTemplateTest extends HeadlessTestBase {
     // ---- Optional toe-kick ----
 
     @Test
-    void defaultBaseCabinetHasNoToeKick() {
-        // toe_kick defaults to 0 — no notch, no kick plate, bottom at Y=0.
+    void defaultBaseCabinetHasToeKick() {
+        // toe_kick defaults to 1 — most real base cabinets have a toe-kick.
         exec("create base_cabinet BCT width 500 height 600 depth 400");
+        assertNotNull(sceneManager.getPart("BCT/toe-kick-front"),
+                "default instantiation should include a toe-kick-front panel");
+        assertEquals(1, sceneManager.getPart("BCT/left-side").getCutouts().size(),
+                "default instantiation should notch the side panels");
+        var bottom = bounds("BCT/bottom");
+        assertEquals(100f, bottom[0].y, 1f,
+                "with default toe-kick, the bottom panel floats up 100mm");
+    }
+
+    @Test
+    void toeKickCanBeDisabled() {
+        // Explicit opt-out with toe_kick 0 — plain cabinet, flat bottom,
+        // no notches, no kick plate.
+        exec("create base_cabinet BCT width 500 height 600 depth 400 toe_kick 0");
         assertNull(sceneManager.getPart("BCT/toe-kick-front"),
-                "default instantiation should not create a toe-kick-front panel");
+                "toe_kick=0 should suppress the kick-plate part");
         assertEquals(0, sceneManager.getPart("BCT/left-side").getCutouts().size(),
-                "default instantiation should leave the side panels uncut");
+                "toe_kick=0 should leave the side panels uncut");
         var bottom = bounds("BCT/bottom");
         assertEquals(0f, bottom[0].y, 1f,
-                "without toe-kick, the bottom panel sits at Y=0");
+                "toe_kick=0 keeps the bottom panel at Y=0");
     }
 
     @Test
