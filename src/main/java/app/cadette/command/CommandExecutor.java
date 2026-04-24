@@ -111,6 +111,14 @@ public class CommandExecutor {
     private Map<String, CadetteCommandParser.ExpressionContext> definingParamDefaults = null;
     private List<String> definingBodyLines = null;
 
+    // -- Top-level if/for block collection state --
+    // Mirrors the define-recording flow: when the user enters `if` or `for`
+    // at top level (script or REPL), subsequent lines are collected until the
+    // matching `end if` / `end for` arrives, then parsed as a templateBody
+    // and walked via the visitor. Nested blocks deepen the depth counter.
+    private int blockCollectionDepth = 0;
+    private List<String> blockCollectionLines = null;
+
     // Suppress individual undo pushes during template instantiation or script runs
     private boolean suppressUndo = false;
     // Collect actions during script run (null when not collecting)
@@ -235,6 +243,17 @@ public class CommandExecutor {
                 return "  (recorded)";
             }
 
+            // -- Top-level if/for block collection --
+            // (Only reached outside define-mode — inside a define, blocks are
+            // just more lines of the template body and get parsed together
+            // when `end define` fires.)
+            if (blockCollectionDepth > 0) {
+                return continueBlockCollection(trimmed, lower);
+            }
+            if (isBlockStart(lower)) {
+                return startBlockCollection(trimmed);
+            }
+
             // -- Normal ANTLR parsing --
             CharStream chars = CharStreams.fromString(trimmed);
             CadetteCommandLexer lexer = new CadetteCommandLexer(chars);
@@ -344,6 +363,50 @@ public class CommandExecutor {
         return "Template '" + name + "' defined ("
                 + bodyLines.size() + " lines, "
                 + paramNames.size() + " params).";
+    }
+
+    // -- Top-level block collection helpers --
+
+    /** True if this line starts an if or for block at top level. */
+    private static boolean isBlockStart(String lower) {
+        return lower.startsWith("if ") || lower.startsWith("for ");
+    }
+
+    /** True if this line is the closing keyword for an if or for block. */
+    private static boolean isBlockEnd(String lower) {
+        return lower.equals("end if") || lower.equals("end for");
+    }
+
+    private String startBlockCollection(String trimmed) {
+        blockCollectionDepth = 1;
+        blockCollectionLines = new ArrayList<>();
+        blockCollectionLines.add(trimmed);
+        // Return empty so scripts don't log an uninteresting "collecting…"
+        // line for every statement inside the block.
+        return "";
+    }
+
+    private String continueBlockCollection(String trimmed, String lower) {
+        blockCollectionLines.add(trimmed);
+        if (isBlockStart(lower)) blockCollectionDepth++;
+        else if (isBlockEnd(lower)) blockCollectionDepth--;
+        if (blockCollectionDepth > 0) return "";
+
+        List<String> lines = blockCollectionLines;
+        blockCollectionLines = null;
+
+        StringBuilder parseErrors = new StringBuilder();
+        CadetteCommandParser.TemplateBodyContext parsed;
+        try {
+            parsed = parseTemplateBody(lines, parseErrors);
+        } catch (Exception e) {
+            return "Error: block parse error — " + e.getMessage();
+        }
+        if (!parseErrors.isEmpty()) {
+            return "Error: block parse error — " + parseErrors;
+        }
+        CommandVisitor visitor = new CommandVisitor(this, scene);
+        return visitor.executeTopLevelBlock(parsed);
     }
 
     /** Parse a multi-line body as a single templateBody unit. */

@@ -1609,6 +1609,26 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         }
     }
 
+    /**
+     * Walk a templateBody outside a template-instantiation context. Used when
+     * the user writes `for` or `if` at top-level (script or REPL). Same
+     * statement-dispatch as inside a template body; no assembly to collect
+     * parts into, so the command branch skips that bookkeeping.
+     */
+    public String executeTopLevelBlock(CadetteCommandParser.TemplateBodyContext body) {
+        StringBuilder output = new StringBuilder();
+        for (var stmt : body.templateStatement()) {
+            executeTemplateStatement(stmt, null, null, output);
+        }
+        return output.toString().stripTrailing();
+    }
+
+    /**
+     * Dispatch one templateStatement. Null assembly/createdParts signal
+     * top-level execution — the command branch then skips the
+     * add-to-assembly step. Output indentation also differs between the
+     * two contexts.
+     */
     private void executeTemplateStatement(CadetteCommandParser.TemplateStatementContext stmt,
                                           Assembly assembly,
                                           List<Part> createdParts,
@@ -1621,14 +1641,17 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
             executor.setLastCreatedPartName(null);
             String result = visit(stmt.command());
             if (result != null && !result.isEmpty()) {
-                output.append("  ").append(result).append("\n");
+                String indent = assembly != null ? "  " : "";
+                output.append(indent).append(result).append("\n");
             }
-            String created = executor.getLastCreatedPartName();
-            if (created != null) {
-                Part part = scene.getPart(created);
-                if (part != null) {
-                    assembly.addPart(part);
-                    createdParts.add(part);
+            if (assembly != null) {
+                String created = executor.getLastCreatedPartName();
+                if (created != null) {
+                    Part part = scene.getPart(created);
+                    if (part != null) {
+                        assembly.addPart(part);
+                        createdParts.add(part);
+                    }
                 }
             }
         }
@@ -1798,30 +1821,89 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         return s;
     }
 
-    // Matches $name or ${name} inside a string literal. Names follow the
-    // same rule as the lexer's VAR_REF: letter/underscore start, alphanumeric
-    // rest. The two capture groups let `${name}` work without eating a
-    // trailing word boundary.
+    // Two forms of interpolation inside a string literal:
+    //   $name      — simple var lookup against the active scope
+    //   ${expr}    — arbitrary expression parsed and evaluated via the same
+    //                grammar/evaluator used everywhere else
+    // The `${...}` form lets names compose with arithmetic: "b${$i - 1}" for
+    // "the previous cabinet". Content stops at the first '}' — nested braces
+    // aren't supported (no use case yet).
     private static final java.util.regex.Pattern STRING_VAR_PATTERN =
-            java.util.regex.Pattern.compile("\\$\\{([a-zA-Z_][a-zA-Z0-9_]*)\\}|\\$([a-zA-Z_][a-zA-Z0-9_]*)");
+            java.util.regex.Pattern.compile("\\$\\{([^}]+)\\}|\\$([a-zA-Z_][a-zA-Z0-9_]*)");
 
     /**
-     * Replace {@code $name} / {@code ${name}} occurrences in a string literal
-     * with values from the active scope. Unresolved references are left
-     * as-is so top-level commands without a scope don't throw.
+     * Replace {@code $name} / {@code ${expression}} occurrences in a string
+     * literal with values from the active scope. Unresolved simple refs are
+     * left as-is so top-level commands without a scope don't throw.
+     * Expressions inside {@code ${...}} surface parse/eval errors — those
+     * are real user mistakes.
      */
     private String interpolateString(String raw) {
         if (raw == null || raw.indexOf('$') < 0) return raw;
         var m = STRING_VAR_PATTERN.matcher(raw);
         StringBuilder out = new StringBuilder();
         while (m.find()) {
-            String name = m.group(1) != null ? m.group(1) : m.group(2);
-            Double v = executor.resolveVar(name);
-            String replacement = v == null ? m.group() : formatInterpolatedNumber(v);
+            String replacement;
+            if (m.group(1) != null) {
+                // ${expression} — parse and evaluate via the grammar.
+                replacement = formatInterpolatedNumber(evaluateExpressionText(m.group(1)));
+            } else {
+                // $name — simple lookup; leave untouched if unresolved.
+                String name = m.group(2);
+                Double v = executor.resolveVar(name);
+                replacement = v == null ? m.group() : formatInterpolatedNumber(v);
+            }
             m.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(replacement));
         }
         m.appendTail(out);
         return out.toString();
+    }
+
+    private static final java.util.regex.Pattern BARE_IDENT =
+            java.util.regex.Pattern.compile("\\s*[a-zA-Z_][a-zA-Z0-9_]*\\s*");
+
+    /**
+     * Parse the given text through the ANTLR `expression` entry rule and
+     * evaluate the resulting tree against the active scope. Used to support
+     * arithmetic inside string interpolation.
+     *
+     * Backward-compat shortcut: a bare identifier inside {@code ${…}} (e.g.
+     * {@code ${width}}) acts as a var lookup, matching the old interpolation
+     * semantics before arithmetic was allowed. Bare identifiers aren't valid
+     * expression syntax (expressions need {@code $} for var refs), so without
+     * this shortcut existing {@code ${name}} usage would break.
+     */
+    private double evaluateExpressionText(String exprText) {
+        if (BARE_IDENT.matcher(exprText).matches()) {
+            String name = exprText.trim();
+            Double v = executor.resolveVar(name);
+            if (v == null) {
+                throw new RuntimeException("Undefined variable inside ${…}: " + name);
+            }
+            return v;
+        }
+        CadetteCommandLexer lexer = new CadetteCommandLexer(
+                org.antlr.v4.runtime.CharStreams.fromString(exprText));
+        lexer.removeErrorListeners();
+        var tokens = new org.antlr.v4.runtime.CommonTokenStream(lexer);
+        CadetteCommandParser parser = new CadetteCommandParser(tokens);
+        parser.removeErrorListeners();
+        StringBuilder errors = new StringBuilder();
+        parser.addErrorListener(new org.antlr.v4.runtime.BaseErrorListener() {
+            @Override
+            public void syntaxError(org.antlr.v4.runtime.Recognizer<?, ?> recognizer,
+                                    Object offendingSymbol, int line, int charPos, String msg,
+                                    org.antlr.v4.runtime.RecognitionException e) {
+                if (!errors.isEmpty()) errors.append("; ");
+                errors.append(msg);
+            }
+        });
+        var ctx = parser.expression();
+        if (!errors.isEmpty()) {
+            throw new RuntimeException("Invalid expression in ${…}: " + exprText
+                    + " — " + errors);
+        }
+        return evaluateExpression(ctx);
     }
 
     /** Format a loop-var or param value for embedding in an identifier: whole numbers render without ".0". */
