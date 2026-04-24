@@ -51,7 +51,7 @@ class CutListBomTest extends HeadlessTestBase {
 
         // Should show machining operations from dados
         assertTrue(cutlist.contains("dado"), "Should list dado operations");
-        assertTrue(cutlist.contains("9.0mm deep"), "Should show dado depth");
+        assertTrue(cutlist.contains("9.0 mm deep"), "Should show dado depth");
 
         // Should show total count
         assertTrue(cutlist.contains("Total: 5 parts"), "Should show total");
@@ -112,7 +112,7 @@ class CutListBomTest extends HeadlessTestBase {
 
         // Left side should show both operations
         // Find the section for left-side
-        assertTrue(cutlist.contains("dado 9.0mm deep for \"K/bottom\""),
+        assertTrue(cutlist.contains("dado 9.0 mm deep for \"K/bottom\""),
                 "Should show dado operation on left side");
         assertTrue(cutlist.contains("pocket screw hole"),
                 "Should show pocket screw operation on left side");

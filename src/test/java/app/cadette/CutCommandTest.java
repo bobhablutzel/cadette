@@ -248,10 +248,28 @@ class CutCommandTest extends HeadlessTestBase {
         exec("cut \"panel\" rect at 10, 10 size 5, 5");
         exec("cut \"panel\" rect at 200, 200 size 5, 5");
         String bom = exec("show cutlist");
-        int firstIdx = bom.indexOf("at (10, 10)");
-        int secondIdx = bom.indexOf("at (200, 200)");
+        int firstIdx = bom.indexOf("at (10.0, 10.0)");
+        int secondIdx = bom.indexOf("at (200.0, 200.0)");
         assertTrue(firstIdx >= 0, "first cut missing from BOM:\n" + bom);
         assertTrue(secondIdx >= 0, "second cut missing from BOM:\n" + bom);
         assertTrue(firstIdx < secondIdx, "BOM should list cuts in insertion order");
+    }
+
+    @Test
+    void bomUsesCurrentDisplayUnitsForCutoutDimensions() {
+        // Create a 762mm (30") part in mm, make a 75mm cutout, then switch
+        // to inches. The cut list should show the cutout in inches, matching
+        // the rest of the displayed dimensions. Matches existing part-header
+        // behavior; fixes the pre-existing mm-hardcode in operations.
+        exec("cut \"panel\" rect at 0, 0 size 75, 75");
+        exec("set units inches");
+        String bom = exec("show cutlist");
+        // 75 mm = 2.953... inches, rounds to "3.0" with %.1f
+        assertTrue(bom.contains(" in "),
+                "cut list should use the current unit abbreviation ('in'):\n" + bom);
+        assertTrue(bom.contains("cutout rect 3.0×3.0 in"),
+                "cutout size should render in inches, not mm:\n" + bom);
+        assertFalse(bom.contains("75.0mm") || bom.contains("75mm"),
+                "cutout line should not leak mm after unit switch:\n" + bom);
     }
 }

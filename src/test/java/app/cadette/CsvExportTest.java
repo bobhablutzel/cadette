@@ -44,7 +44,8 @@ class CsvExportTest extends HeadlessTestBase {
     }
 
     private List<CutListGenerator.CutListEntry> cutList() {
-        return CutListGenerator.generateCutList(sceneManager.getAllParts(), sceneManager.getJointRegistry());
+        return CutListGenerator.generateCutList(sceneManager.getAllParts(),
+                sceneManager.getJointRegistry(), executor.getUnits());
     }
 
     @Test

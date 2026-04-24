@@ -18,6 +18,7 @@
 
 package app.cadette.model;
 
+import app.cadette.UnitSystem;
 import lombok.Data;
 
 import java.util.*;
@@ -70,9 +71,13 @@ public class CutListGenerator {
     /**
      * Generate the cut list from all parts in the scene.
      * Groups by material, includes machining operations from joints.
+     *
+     * <p>Operation dimensions (dado depth, cutout size, etc.) are formatted
+     * in the caller's display units. Part dimensions are returned in mm
+     * and converted at display time by the command visitor.
      */
     public static List<CutListEntry> generateCutList(
-            Map<String, Part> parts, JointRegistry joints) {
+            Map<String, Part> parts, JointRegistry joints, UnitSystem units) {
         return parts.values().stream()
                 .map(part -> new CutListEntry(
                         part.getName(),
@@ -81,7 +86,7 @@ public class CutListGenerator {
                         part.getCutHeightMm(),
                         part.getThicknessMm(),
                         part.getGrainRequirement(),
-                        operationsFor(part, joints)))
+                        operationsFor(part, joints, units)))
                 .sorted(Comparator
                         .comparing((CutListEntry e) -> e.getMaterial().getName())
                         .thenComparing(CutListEntry::getPartName))
@@ -94,23 +99,26 @@ public class CutListGenerator {
      * (they're the traditional cut-list operations); cutouts follow in
      * the order they were added.
      */
-    private static List<String> operationsFor(Part part, JointRegistry joints) {
+    private static List<String> operationsFor(Part part, JointRegistry joints, UnitSystem units) {
         return Stream.concat(
                 joints.getJointsForPart(part.getName()).stream()
                         .filter(j -> j.getReceivingPartName().equals(part.getName()))
-                        .map(CutListGenerator::describeOperation)
+                        .map(j -> describeOperation(j, units))
                         .flatMap(Optional::stream),
                 part.getCutouts().stream()
-                        .map(CutListGenerator::describeCutout)
+                        .map(c -> describeCutout(c, units))
         ).toList();
     }
 
-    private static Optional<String> describeOperation(Joint j) {
+    private static Optional<String> describeOperation(Joint j, UnitSystem units) {
+        String abbr = units.getAbbreviation();
         return switch (j.getType()) {
             case DADO -> Optional.of(String.format(
-                    "dado %.1fmm deep for \"%s\"", j.getDepthMm(), j.getInsertedPartName()));
+                    "dado %.1f %s deep for \"%s\"",
+                    units.fromMm(j.getDepthMm()), abbr, j.getInsertedPartName()));
             case RABBET -> Optional.of(String.format(
-                    "rabbet %.1fmm deep for \"%s\"", j.getDepthMm(), j.getInsertedPartName()));
+                    "rabbet %.1f %s deep for \"%s\"",
+                    units.fromMm(j.getDepthMm()), abbr, j.getInsertedPartName()));
             case POCKET_SCREW -> j.getScrewCount() > 0
                     ? Optional.of(String.format("%d pocket screw hole(s) for \"%s\"",
                             j.getScrewCount(), j.getInsertedPartName()))
@@ -119,13 +127,15 @@ public class CutListGenerator {
         };
     }
 
-    private static String describeCutout(Cutout cutout) {
+    private static String describeCutout(Cutout cutout, UnitSystem units) {
+        String abbr = units.getAbbreviation();
         if (cutout instanceof Cutout.Rect r) {
             String depthStr = r.depthMm() != null
-                    ? String.format(" %.1fmm deep", r.depthMm())
+                    ? String.format(" %.1f %s deep", units.fromMm(r.depthMm()), abbr)
                     : " through";
-            return String.format("cutout rect %.0f×%.0fmm at (%.0f, %.0f)%s",
-                    r.widthMm(), r.heightMm(), r.xMm(), r.yMm(), depthStr);
+            return String.format("cutout rect %.1f×%.1f %s at (%.1f, %.1f)%s",
+                    units.fromMm(r.widthMm()), units.fromMm(r.heightMm()), abbr,
+                    units.fromMm(r.xMm()), units.fromMm(r.yMm()), depthStr);
         }
         // Stub variants not yet reachable through the grammar, but will need
         // their own describeCutout branches when they land.

@@ -847,7 +847,7 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         try {
             UnitSystem units = executor.getUnits();
             if (isCsv) {
-                var entries = CutListGenerator.generateCutList(parts, scene.getJointRegistry());
+                var entries = CutListGenerator.generateCutList(parts, scene.getJointRegistry(), executor.getUnits());
                 CutListExporter.exportCsv(entries, units, outputPath);
                 return "Exported cut list to " + outputPath.toAbsolutePath();
             }
@@ -1374,7 +1374,7 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         var parts = scene.getAllParts();
         if (parts.isEmpty()) return "No parts in scene. (Cut list only includes parts, not primitives.)";
 
-        var entries = CutListGenerator.generateCutList(parts, scene.getJointRegistry());
+        var entries = CutListGenerator.generateCutList(parts, scene.getJointRegistry(), executor.getUnits());
         String abbr = executor.getUnits().getAbbreviation();
 
         // Entries arrive sorted by material name, so groupingBy on a
