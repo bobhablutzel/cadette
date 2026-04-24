@@ -922,7 +922,17 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
                         d -> d.paramName().get(0).getText().toLowerCase(),
                         (a, b) -> b,
                         LinkedHashMap::new));
-        return executor.beginDefine(name, paramNames, paramAliases);
+        // Defaults are stored as unevaluated ExpressionContext so they can
+        // reference prior params at instantiation time (e.g. `height = $width * 2`).
+        Map<String, CadetteCommandParser.ExpressionContext> paramDefaults =
+                ctx.paramDecl().stream()
+                        .filter(d -> d.expression() != null)
+                        .collect(Collectors.toMap(
+                                d -> d.paramName().get(0).getText().toLowerCase(),
+                                CadetteCommandParser.ParamDeclContext::expression,
+                                (a, b) -> b,
+                                LinkedHashMap::new));
+        return executor.beginDefine(name, paramNames, paramAliases, paramDefaults);
     }
 
     @Override

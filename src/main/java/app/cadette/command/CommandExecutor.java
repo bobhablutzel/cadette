@@ -108,6 +108,7 @@ public class CommandExecutor {
     private String definingTemplateName = null;
     private List<String> definingParamNames = null;
     private Map<String, String> definingParamAliases = null;
+    private Map<String, CadetteCommandParser.ExpressionContext> definingParamDefaults = null;
     private List<String> definingBodyLines = null;
 
     // Suppress individual undo pushes during template instantiation or script runs
@@ -275,23 +276,37 @@ public class CommandExecutor {
      * Enter template-recording mode. Called by the visitor after ANTLR parses
      * the define header. Subsequent lines are collected until "end define".
      */
-    String beginDefine(String name, List<String> paramNames, Map<String, String> paramAliases) {
+    String beginDefine(String name, List<String> paramNames, Map<String, String> paramAliases,
+                       Map<String, CadetteCommandParser.ExpressionContext> paramDefaults) {
         definingTemplateName = name;
         definingParamNames = new ArrayList<>(paramNames);
         definingParamAliases = new LinkedHashMap<>(paramAliases);
+        definingParamDefaults = new LinkedHashMap<>(paramDefaults);
         definingBodyLines = new ArrayList<>();
         definingTemplate = true;
 
         String paramDesc = definingParamNames.stream()
-                .map(pName -> pName + definingParamAliases.entrySet().stream()
-                        .filter(e -> e.getValue().equals(pName))
-                        .findFirst()
-                        .map(e -> "(" + e.getKey() + ")")
-                        .orElse(""))
+                .map(pName -> pName
+                        + aliasSuffix(pName, definingParamAliases)
+                        + defaultSuffix(pName, definingParamDefaults))
                 .collect(Collectors.joining(", "));
 
         return "Defining template '" + definingTemplateName + "'"
                 + (definingParamNames.isEmpty() ? "..." : " (params: " + paramDesc + ")...");
+    }
+
+    private static String aliasSuffix(String pName, Map<String, String> aliases) {
+        return aliases.entrySet().stream()
+                .filter(e -> e.getValue().equals(pName))
+                .findFirst()
+                .map(e -> "(" + e.getKey() + ")")
+                .orElse("");
+    }
+
+    private static String defaultSuffix(String pName,
+                                        Map<String, CadetteCommandParser.ExpressionContext> defaults) {
+        CadetteCommandParser.ExpressionContext def = defaults.get(pName);
+        return def != null ? "=" + def.getText() : "";
     }
 
     private String finishDefine() {
@@ -302,11 +317,13 @@ public class CommandExecutor {
         String name = definingTemplateName;
         List<String> paramNames = definingParamNames;
         Map<String, String> paramAliases = definingParamAliases;
+        Map<String, CadetteCommandParser.ExpressionContext> paramDefaults = definingParamDefaults;
         List<String> bodyLines = List.copyOf(definingBodyLines);
         definingTemplate = false;
         definingTemplateName = null;
         definingParamNames = null;
         definingParamAliases = null;
+        definingParamDefaults = null;
         definingBodyLines = null;
 
         CadetteCommandParser.TemplateBodyContext parsedBody;
@@ -321,7 +338,7 @@ public class CommandExecutor {
         }
 
         Template template = new Template(name, paramNames, paramAliases,
-                bodyLines, parsedBody, src);
+                paramDefaults, bodyLines, parsedBody, src);
         TemplateRegistry.instance().register(template);
 
         return "Template '" + name + "' defined ("
@@ -505,11 +522,16 @@ public class CommandExecutor {
     /**
      * Resolve raw parameter key-value pairs against a template's declared params.
      * Keys are resolved via template-specific aliases first, then global aliases.
-     * Returns null if any declared param is missing.
+     * Missing params fall back to their declared default expression (if any) —
+     * defaults are evaluated left-to-right with earlier params already in scope,
+     * so {@code params width, height=$width*2} works the way it reads.
+     * Returns null if any declared param is missing and has no default.
      */
     private Map<String, Double> resolveParamValues(Template template, Map<String, Double> rawValues) {
         List<String> paramNames = template.getParamNames();
-        if (rawValues.isEmpty() && !paramNames.isEmpty()) {
+        // All params required and no defaults? Early exit.
+        if (rawValues.isEmpty() && !paramNames.isEmpty()
+                && paramNames.stream().noneMatch(template::hasDefault)) {
             return null;
         }
 
@@ -520,13 +542,28 @@ public class CommandExecutor {
                         (a, b) -> b,   // last-wins on duplicate resolved keys
                         LinkedHashMap::new));
 
-        Map<String, Double> vars = new LinkedHashMap<>();
-        for (String param : paramNames) {
-            Double val = canonical.get(param);
-            if (val == null) return null;
-            vars.put(param, val);
+        // Evaluate defaults with the partially-bound scope visible — push a
+        // fresh scope, bind each param in order, evaluate missing ones via
+        // their declared default expression. Drain into `vars` at the end.
+        CommandVisitor visitor = new CommandVisitor(this, scene);
+        pushVarScope(new LinkedHashMap<>());
+        try {
+            for (String param : paramNames) {
+                Double val = canonical.get(param);
+                if (val == null) {
+                    CadetteCommandParser.ExpressionContext defaultExpr =
+                            template.getParamDefaults().get(param);
+                    if (defaultExpr == null) return null;
+                    val = visitor.evaluateExpression(defaultExpr);
+                }
+                setInCurrentScope(param, val);
+            }
+            Map<String, Double> vars = new LinkedHashMap<>();
+            for (String p : paramNames) vars.put(p, resolveVar(p));
+            return vars;
+        } finally {
+            popVarScope();
         }
-        return vars;
     }
 
     /** Canonicalize a user-supplied param key via the template's own aliases, then global aliases. */
@@ -814,6 +851,7 @@ public class CommandExecutor {
                 definingTemplateName = null;
                 definingParamNames = null;
                 definingParamAliases = null;
+                definingParamDefaults = null;
                 definingBodyLines = null;
             }
         } finally {

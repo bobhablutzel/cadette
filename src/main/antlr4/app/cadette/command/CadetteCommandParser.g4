@@ -341,8 +341,11 @@ pathSegment
     | PATH_QUOTED
     ;
 
+// `name` or `name(alias)` optionally followed by `= <default-expression>`.
+// Default expressions are evaluated left-to-right at instantiation time, so a
+// later param's default can reference earlier params via $-ref.
 paramDecl
-    : paramName (LPAREN paramName RPAREN)?
+    : paramName (LPAREN paramName RPAREN)? (ASSIGN expression)?
     ;
 
 // Parameter names may shadow keyword tokens like 'width' — accept common

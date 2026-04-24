@@ -41,6 +41,12 @@ public class Template {
     private final String name;
     private final List<String> paramNames;          // canonical names in order
     private final Map<String, String> paramAliases;  // alias → canonical name
+    /**
+     * Default-value expressions per param (canonical name → parsed expression),
+     * only containing entries for params declared with {@code = <expr>}.
+     * Evaluated at instantiation time with earlier params already in scope.
+     */
+    private final Map<String, CadetteCommandParser.ExpressionContext> paramDefaults;
     /** Raw body lines as the user wrote them — preserves comments and source formatting. */
     private final List<String> bodyLines;
     /**
@@ -54,16 +60,16 @@ public class Template {
     private final String source;
 
     // Hand-coded: convenience ctor that delegates to the full form with
-    // no aliases, no parsed body (legacy tests), and no source tag.
+    // no aliases, no defaults, no parsed body (legacy tests), and no source tag.
     public Template(String name, List<String> paramNames, List<String> bodyLines) {
-        this(name, paramNames, Map.of(), bodyLines, null, null);
+        this(name, paramNames, Map.of(), Map.of(), bodyLines, null, null);
     }
 
     // Hand-coded: no-parsedBody 4-arg overload kept so existing tests that
     // construct templates directly don't need to thread a parse tree through.
     public Template(String name, List<String> paramNames, Map<String, String> paramAliases,
                     List<String> bodyLines) {
-        this(name, paramNames, paramAliases, bodyLines, null, null);
+        this(name, paramNames, paramAliases, Map.of(), bodyLines, null, null);
     }
 
     // Hand-coded: defensive List.copyOf / Map.copyOf so template bodies and
@@ -71,15 +77,22 @@ public class Template {
     // @RequiredArgsConstructor / @AllArgsConstructor would store the caller's
     // references directly.
     public Template(String name, List<String> paramNames, Map<String, String> paramAliases,
+                    Map<String, CadetteCommandParser.ExpressionContext> paramDefaults,
                     List<String> bodyLines,
                     CadetteCommandParser.TemplateBodyContext parsedBody,
                     String source) {
         this.name = name;
         this.paramNames = List.copyOf(paramNames);
         this.paramAliases = Map.copyOf(paramAliases);
+        this.paramDefaults = Map.copyOf(paramDefaults);
         this.bodyLines = List.copyOf(bodyLines);
         this.parsedBody = parsedBody;
         this.source = source;
+    }
+
+    /** True if the named param has a default expression declared. */
+    public boolean hasDefault(String paramName) {
+        return paramDefaults.containsKey(paramName);
     }
 
     /** Resolve a param name or alias to its canonical name. Returns null if not recognized. */
