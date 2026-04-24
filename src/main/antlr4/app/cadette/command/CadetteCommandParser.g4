@@ -378,6 +378,11 @@ expression
     | expression OR expression                                              # orExpr
     | NUMBER                                                                # numberExpr
     | VAR_REF                                                               # varRefExpr
+    // Bare identifier as a variable reference. Keywords (WIDTH, MIN, etc.)
+    // lex as themselves and never land here, so this doesn't collide with
+    // command-level keyword uses. Needed so `${i - 1}` works without forcing
+    // a second `$` inside the interpolation braces.
+    | ID                                                                    # idRefExpr
     ;
 
 position

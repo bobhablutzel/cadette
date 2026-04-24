@@ -1766,6 +1766,18 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
                 }
                 yield v;
             }
+            case CadetteCommandParser.IdRefExprContext c -> {
+                // Bare identifier: same resolution as $-prefixed VAR_REF.
+                // Reached when the user writes `${i - 1}` (no $) and in
+                // other expression contexts where an unprefixed name
+                // happens to lex as ID rather than a keyword.
+                String name = c.ID().getText();
+                Double v = executor.resolveVar(name);
+                if (v == null) {
+                    throw new RuntimeException("Undefined variable " + name);
+                }
+                yield v;
+            }
             default -> throw new AssertionError(
                     "Unhandled expression node: " + ctx.getClass().getSimpleName());
         };
@@ -1859,29 +1871,14 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
         return out.toString();
     }
 
-    private static final java.util.regex.Pattern BARE_IDENT =
-            java.util.regex.Pattern.compile("\\s*[a-zA-Z_][a-zA-Z0-9_]*\\s*");
-
     /**
      * Parse the given text through the ANTLR `expression` entry rule and
-     * evaluate the resulting tree against the active scope. Used to support
-     * arithmetic inside string interpolation.
-     *
-     * Backward-compat shortcut: a bare identifier inside {@code ${…}} (e.g.
-     * {@code ${width}}) acts as a var lookup, matching the old interpolation
-     * semantics before arithmetic was allowed. Bare identifiers aren't valid
-     * expression syntax (expressions need {@code $} for var refs), so without
-     * this shortcut existing {@code ${name}} usage would break.
+     * evaluate the resulting tree against the active scope. The grammar
+     * treats bare identifiers as variable references (via the `idRefExpr`
+     * alternative), so {@code ${i - 1}} and {@code ${$i - 1}} both work
+     * without any text preprocessing.
      */
     private double evaluateExpressionText(String exprText) {
-        if (BARE_IDENT.matcher(exprText).matches()) {
-            String name = exprText.trim();
-            Double v = executor.resolveVar(name);
-            if (v == null) {
-                throw new RuntimeException("Undefined variable inside ${…}: " + name);
-            }
-            return v;
-        }
         CadetteCommandLexer lexer = new CadetteCommandLexer(
                 org.antlr.v4.runtime.CharStreams.fromString(exprText));
         lexer.removeErrorListeners();

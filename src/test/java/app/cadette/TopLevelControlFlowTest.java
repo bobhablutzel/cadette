@@ -101,19 +101,43 @@ class TopLevelControlFlowTest extends HeadlessTestBase {
     // ---- ${expression} arithmetic interpolation ----
 
     @Test
-    void arithmeticInStringInterpolation() {
-        // Create b_1, then b_2 references b_${$i - 1} — the previous cabinet.
+    void arithmeticInStringInterpolationWithoutDollarPrefix() {
+        // Inside ${…} bare identifiers are treated as variable references —
+        // users can write `${i - 1}` without the inner $.
         exec("create part \"b_1\" size 10, 10 at 0, 0, 0");
         exec("for $i = 2 to 3");
         exec("create part \"b_$i\" size 10, 10 at 0, 0, 0");
-        // A second create that uses arithmetic interpolation in its name
-        exec("create part \"back_of_b_${$i - 1}\" size 5, 5 at 0, 0, 0");
+        exec("create part \"back_of_b_${i - 1}\" size 5, 5 at 0, 0, 0");
         exec("end for");
 
-        // For $i=2: back_of_b_1 should exist. For $i=3: back_of_b_2.
         assertNotNull(sceneManager.getPart("back_of_b_1"));
         assertNotNull(sceneManager.getPart("back_of_b_2"));
         assertNull(sceneManager.getPart("back_of_b_0"));
+    }
+
+    @Test
+    void arithmeticInStringInterpolationWithDollarPrefix() {
+        // `${$i - 1}` keeps working for consistency with expression syntax
+        // elsewhere in the grammar.
+        exec("for $i = 2 to 3");
+        exec("create part \"p_${$i - 1}\" size 5, 5 at 0, 0, 0");
+        exec("end for");
+
+        assertNotNull(sceneManager.getPart("p_1"));
+        assertNotNull(sceneManager.getPart("p_2"));
+    }
+
+    @Test
+    void functionCallsInInterpolationStillWork() {
+        // `min` / `max` inside ${…} stay as function calls, not treated as
+        // bare-identifier var refs. Using distinct $i values so part names
+        // don't collide.
+        exec("for $i = 1 to 2");
+        exec("create part \"capped_${min($i, 5)}\" size 5, 5 at 0, 0, 0");
+        exec("end for");
+
+        assertNotNull(sceneManager.getPart("capped_1"));
+        assertNotNull(sceneManager.getPart("capped_2"));
     }
 
     @Test
