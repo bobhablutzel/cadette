@@ -87,6 +87,25 @@ class RunCommandTest extends HeadlessTestBase {
     }
 
     @Test
+    void runResolvesViaScriptsFallback() {
+        // Bundled scripts live at <project-root>/scripts/. A relative path that
+        // doesn't resolve from cwd should fall back through there.
+        String result = exec("run tutorials/tutorial_1_simple_box.cds");
+        assertFalse(result.contains("File not found"),
+                "scripts/ fallback should locate the tutorial: " + result);
+        assertTrue(result.contains("Running"), "Should confirm start: " + result);
+    }
+
+    @Test
+    void runDefaultsCdsExtension() {
+        // Same fallback as above, but without the .cds suffix in the input.
+        String result = exec("run tutorials/tutorial_1_simple_box");
+        assertFalse(result.contains("File not found"),
+                ".cds default should still locate the tutorial: " + result);
+        assertTrue(result.contains("Running"), "Should confirm start: " + result);
+    }
+
+    @Test
     void runWithNoPathAndNoChooser() {
         // No fileChooser is registered on the executor → message instead of NPE
         String result = exec("run");

@@ -268,7 +268,10 @@ public class CommandExecutor {
                 @Override
                 public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol,
                                         int line, int charPos, String msg, RecognitionException e) {
-                    errors.append("Parse error: ").append(msg);
+                    // Single-line parse — line is always 1, only the column is useful.
+                    errors.append("Parse error at column ").append(charPos + 1)
+                            .append(": ").append(msg)
+                            .append(pointerLine(trimmed, charPos));
                 }
             });
 
@@ -423,10 +426,25 @@ public class CommandExecutor {
             public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol,
                                     int line, int charPos, String msg, RecognitionException e) {
                 if (!errorsOut.isEmpty()) errorsOut.append("; ");
-                errorsOut.append("body line ").append(line).append(": ").append(msg);
+                String src = (line >= 1 && line <= bodyLines.size())
+                        ? bodyLines.get(line - 1) : "";
+                errorsOut.append("body line ").append(line)
+                        .append(", column ").append(charPos + 1)
+                        .append(": ").append(msg)
+                        .append(pointerLine(src, charPos));
             }
         });
         return parser.templateBody();
+    }
+
+    /**
+     * Build a clang/rust-style "  <source-line>\n  <spaces>^" pointer that
+     * appended to a parse-error message visually marks the offending column.
+     * Package-private so CommandVisitor's interpolation listener can share it.
+     */
+    static String pointerLine(String sourceLine, int charPos) {
+        int safe = Math.max(0, Math.min(charPos, sourceLine.length()));
+        return "\n  " + sourceLine + "\n  " + " ".repeat(safe) + "^";
     }
 
     // ======================== Template Instantiation ========================
@@ -982,9 +1000,29 @@ public class CommandExecutor {
     /** Called by the visitor with an explicit path (already variable-expanded). */
     String runScriptPath(String path) {
         if (path.isEmpty()) return "Empty path.";
-        Path file = Path.of(path);
-        if (!Files.exists(file)) return "File not found: " + file;
+        Path file = resolveScriptPath(path);
+        if (file == null) return "File not found: " + path;
         return runScriptIsolated(file);
+    }
+
+    /**
+     * Resolve a `run`-command path against the script search path. For each
+     * suffix variant (the input as-given, then with ".cds" appended if the
+     * input doesn't already end in .cds), try each search-path entry in order:
+     *   1. Literal path (absolute, or relative to cwd).
+     *   2. ./scripts/<path>, the project-root bundled-scripts directory.
+     * Returns null if no combination matches. Multi-entry search-path support
+     * is a deferred backlog item.
+     */
+    private static Path resolveScriptPath(String path) {
+        boolean hasExt = path.toLowerCase().endsWith(".cds");
+        for (String candidate : hasExt ? List.of(path) : List.of(path, path + ".cds")) {
+            Path literal = Path.of(candidate);
+            if (Files.exists(literal)) return literal;
+            Path bundled = Path.of("scripts").resolve(candidate);
+            if (Files.exists(bundled)) return bundled;
+        }
+        return null;
     }
 
     /**

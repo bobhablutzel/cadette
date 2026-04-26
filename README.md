@@ -1,8 +1,47 @@
 # CADette
 
-A 3D command-shell CAD tool for designing cabinets, woodworking jigs, and other shop projects. Built on [jMonkeyEngine](https://jmonkeyengine.org/).
+CADette simplifies the design, layout, and construction of cabinets and woodworking jigs.
 
-CADette works with real materials — plywood, MDF, hardwood, metal — each with actual thickness. You design assemblies of cut pieces connected by joinery, then generate cut lists and bills of materials.
+At it's core, CADette is a purpose-built engine that understands commonly used materials - sheet goods, timbers, etc. - as well as related
+materials (granite countertops, e.g) and how those materials can be joined into complex objects. On top of that, CADette provides a 3D
+rendering system to visualize the assemblies, a cut-sheet generate to guide the construction process, and a complete command language for
+creating and sharing reusable templates and designs.
+
+CADette has three basic building blocks:
+- _Parts_, which are individual pieces with an associated size, material, and placement
+- _Assemblies_, which are collections of Parts that have been connected to each other (via Joints)
+- _Templates_, which are reusable instructions on how to create an Assembly.
+
+These are manipulated either directly in the 3D window, or commonly through the CADette language which
+provides powerful commands to manipulate these building blocks. The CADette commands can be stored in 
+scripts and executed as a group, or entered manually (often used when playing around, or building an initial
+version of a template or script). The CADette language is described fully in [doc/SCRIPTING.md](doc/SCRIPTING.md).
+
+## Documentation
+
+- [Tutorial 1: Simple box](doc/TUTORIAL_1_Simple_box.md) — walk through building your first assembly from scratch.
+- [Scripting reference](doc/SCRIPTING.md) — full reference for the CADette command language.
+
+
+** Parts
+Parts are the fundamental building block. The CADette engine tracks key aspects of the Part - it's name, size, materials, and so forth
+and allows you to manipulate the part via rotating it, moving it, and joining it to other Parts. Some of these aspects are set from
+the time of creation - e.g. the name and the material - and require you to delete and recreate the Part to change it. Others, such as the position
+and rotation, can be changed at will.
+
+Parts are created with the "create" command, or by right-clicking in an empty area of the scene
+
+Templates allow for variations, such as changing the dimensions, varying the number of elements (such as shelves), and supporting optional elements (such as toe-kicks) so that a single Template can be reused to create a whole family of related Assemblies.
+
+
+Key CADette features
+- Fully open source and free
+- Lighweight, purpose built (no distracting unneeded functionality)
+- Rapid and repeatable designs with command language
+- Reuse and share template designs
+- 3D visualization
+- Realtime cutsheet layout (grain aware)
+- Comprehensive and extensible list of materials and joints
 
 ## Requirements
 
@@ -59,7 +98,7 @@ For dado and rabbet, depth defaults to half the receiving material's thickness i
 
 ### Templates
 
-CADette ships with 5 built-in templates: `base_cabinet`, `wall_cabinet`, `drawer_box`, `shelf_unit`, and `crosscut_sled`. Instantiate them with parameters:
+CADette ships with 5 standard templates: `base_cabinet`, `wall_cabinet`, `drawer_box`, `shelf_unit`, and `crosscut_sled`. Instantiate them with parameters:
 
 ```
 create base_cabinet "K1" width 600 height 900 depth 400
@@ -78,6 +117,8 @@ define "my-box" params width(w), height(h), depth(d)
   join "right" to "bottom" with dado
 end define
 ```
+
+These definitions can be stored in a .cds file and shared or contributed to the project.
 
 Use `show template <name>` to view any built-in template as a copiable `define` block.
 

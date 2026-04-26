@@ -1995,13 +1995,15 @@ public class CommandVisitor extends CadetteCommandParserBaseVisitor<String> {
                                     Object offendingSymbol, int line, int charPos, String msg,
                                     org.antlr.v4.runtime.RecognitionException e) {
                 if (!errors.isEmpty()) errors.append("; ");
-                errors.append(msg);
+                errors.append("at column ").append(charPos + 1).append(": ").append(msg)
+                        .append(CommandExecutor.pointerLine(exprText, charPos));
             }
         });
         var ctx = parser.expression();
         if (!errors.isEmpty()) {
-            throw new RuntimeException("Invalid expression in ${…}: " + exprText
-                    + " — " + errors);
+            // exprText itself is shown by the pointer line embedded in `errors`,
+            // so don't repeat it in the wrap.
+            throw new RuntimeException("Invalid expression in ${…} " + errors);
         }
         return evaluateExpression(ctx);
     }
