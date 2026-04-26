@@ -13,16 +13,18 @@ define standard/cabinets/fixed_shelf_unit params width(w), height(h), depth(d), 
   rotate "left-side" 0, 90, 0
   create part "right-side" size $depth, $height at $width - $thickness, 0, 0 grain vertical
   rotate "right-side" 0, 90, 0
-  create part "bottom" size $width - 2 * $thickness, $depth at $thickness, 0, 0
+  # Bottom, top, back, and shelves all extend $thickness/2 (= default dado/rabbet
+  # depth) into the side panels' grooves rather than butting against the inside faces.
+  create part "bottom" size $width - $thickness, $depth at $thickness / 2, 0, 0
   rotate "bottom" -90, 0, 0
-  create part "top" size $width - 2 * $thickness, $depth at $thickness, $height - $thickness, 0
+  create part "top" size $width - $thickness, $depth at $thickness / 2, $height - $thickness, 0
   rotate "top" -90, 0, 0
-  create part "back" material "hardboard-5.5mm" size $width, $height at 0, 0, -$depth
+  create part "back" material "hardboard-5.5mm" size $width - $thickness, $height at $thickness / 2, 0, -$depth
   # Shelves evenly spaced — $i/($shelf_count+1) places them between the
   # bottom and top panels without touching either. 10mm back-offset keeps
   # them clear of the hardboard back.
   for $i = 1 to $shelf_count
-    create part "shelf_$i" size $width - 2 * $thickness, $depth - 10mm at $thickness, $i * $height / ($shelf_count + 1), 0
+    create part "shelf_$i" size $width - $thickness, $depth - 10mm at $thickness / 2, $i * $height / ($shelf_count + 1), 0
     rotate "shelf_$i" -90, 0, 0
   end for
   # Joinery — sides receive everything via dados; back sits in rabbets.

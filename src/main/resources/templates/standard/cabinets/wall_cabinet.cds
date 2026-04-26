@@ -11,11 +11,13 @@ define standard/cabinets/wall_cabinet params width(w), height(h), depth(d)
   rotate "left-side" 0, 90, 0
   create part "right-side" size $depth, $height at $width - $thickness, 0, 0 grain vertical
   rotate "right-side" 0, 90, 0
-  create part "top" size $width - 2 * $thickness, $depth at $thickness, $height - $thickness, 0
+  # Top, bottom, and back extend $thickness/2 (= default dado/rabbet depth) into
+  # the side panels' grooves rather than butting against the inside faces.
+  create part "top" size $width - $thickness, $depth at $thickness / 2, $height - $thickness, 0
   rotate "top" -90, 0, 0
-  create part "bottom" size $width - 2 * $thickness, $depth at $thickness, 0, 0
+  create part "bottom" size $width - $thickness, $depth at $thickness / 2, 0, 0
   rotate "bottom" -90, 0, 0
-  create part "back" material "hardboard-5.5mm" size $width, $height at 0, 0, -$depth
+  create part "back" material "hardboard-5.5mm" size $width - $thickness, $height at $thickness / 2, 0, -$depth
   # Joinery
   join "left-side" to "top" with dado
   join "right-side" to "top" with dado

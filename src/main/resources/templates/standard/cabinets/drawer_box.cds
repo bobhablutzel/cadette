@@ -10,9 +10,11 @@ define standard/cabinets/drawer_box params width(w), height(h), depth(d)
   rotate "left-side" 0, 90, 0
   create part "right-side" size $depth, $height at $width - $thickness, 0, 0 grain vertical
   rotate "right-side" 0, 90, 0
-  create part "front" size $width - 2 * $thickness, $height at $thickness, 0, -$thickness grain vertical
-  create part "back" size $width - 2 * $thickness, $height at $thickness, 0, -$depth grain vertical
-  create part "bottom" material "plywood-1/4" size $width, $depth at 0, 0, 0
+  # Front, back, and bottom extend $thickness/2 (= default dado/rabbet depth) into
+  # the side panels' grooves rather than butting against the inside faces.
+  create part "front" size $width - $thickness, $height at $thickness / 2, 0, -$thickness grain vertical
+  create part "back" size $width - $thickness, $height at $thickness / 2, 0, -$depth grain vertical
+  create part "bottom" material "plywood-1/4" size $width - $thickness, $depth at $thickness / 2, 0, 0
   rotate "bottom" -90, 0, 0
   # Joinery
   join "left-side" to "front" with dado
